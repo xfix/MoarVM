@@ -1,11 +1,14 @@
-#define PARROT_IN_EXTENSION
-#include "parrot/parrot.h"
-#include "parrot/extend.h"
-#include "../sixmodelobject.h"
+#include <moarvm.h>
 #include "CPointer.h"
 
+#define ALIGNOF(type) \
+    ((MVMuint16)offsetof(struct { char dummy; type member; }, member))
+
+typedef MVMObject * (* wrap_object_t) (MVMThreadContext *tc, void *obj);
+typedef MVMObject * (* create_stable_t) (MVMThreadContext *tc, MVMREPROps *REPR, MVMObject *HOW);
+
 /* This representation's function pointer table. */
-static REPROps *this_repr;
+static MVMREPROps *this_repr;
 
 /* Some functions we have to get references to. */
 static wrap_object_t   wrap_object_func;
@@ -13,68 +16,67 @@ static create_stable_t create_stable_func;
 
 /* Creates a new type object of this representation, and associates it with
  * the given HOW. */
-static PMC * type_object_for(PARROT_INTERP, PMC *HOW) {
-    /* Create new object instance. */
-    CPointerInstance *obj = mem_allocate_zeroed_typed(CPointerInstance);
+static MVMObject * type_object_for(MVMThreadContext *tc, MVMObject *HOW) {
+    MVMSTable        *st;
+    MVMObject        *obj;
 
-    /* Build an STable. */
-    PMC *st_pmc = create_stable_func(interp, this_repr, HOW);
-    STable *st  = STABLE_STRUCT(st_pmc);
-
-    /* Create type object and point it back at the STable. */
-    obj->common.stable = st_pmc;
-    st->WHAT = wrap_object_func(interp, obj);
-    PARROT_GC_WRITE_BARRIER(interp, st_pmc);
-
-    /* Flag it as a type object. */
-    MARK_AS_TYPE_OBJECT(st->WHAT);
+    st = MVM_gc_allocate_stable(tc, this_repr, HOW);
+    MVMROOT(tc, st, {
+        obj = MVM_gc_allocate_type_object(tc, st);
+        MVM_ASSIGN_REF(tc, st, st->WHAT, obj);
+        st->size = sizeof(MVMCPointer);
+        /* FIXME??? */
+        st->WHAT = wrap_object_func(tc, obj);
+    });
 
     return st->WHAT;
 }
 
 /* Composes the representation. */
-static void compose(PARROT_INTERP, STable *st, PMC *repr_info) {
+static void compose(MVMThreadContext *tc, MVMSTable *st, MVMObject *repr_info) {
     /* Nothing to do. */
+    (void)tc, (void)st, (void)repr_info;
 }
 
 /* Creates a new instance based on the type object. */
-static PMC * allocate(PARROT_INTERP, STable *st) {
-    CPointerInstance *obj = mem_allocate_zeroed_typed(CPointerInstance);
-    obj->common.stable = st->stable_pmc;
-    return wrap_object_func(interp, obj);
+static MVMObject * allocate(MVMThreadContext *tc, MVMSTable *st) {
+    MVMCPointer *obj = calloc(1, sizeof(MVMCPointer));
+    obj->common.st = st;
+    return wrap_object_func(tc, obj);
 }
 
 /* Initialize a new instance. */
-static void initialize(PARROT_INTERP, STable *st, void *data) {
+static void initialize(MVMThreadContext *tc, MVMSTable *st, MVMObject *root, void *data) {
     /* Nothing to do here. */
+    (void)tc, (void)st, (void)root, (void)data;
 }
 
 /* Copies to the body of one object to another. */
-static void copy_to(PARROT_INTERP, STable *st, void *src, void *dest) {
-    CPointerBody *src_body = (CPointerBody *)src;
-    CPointerBody *dest_body = (CPointerBody *)dest;
+static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, MVMObject *dest_root, void *dest) {
+    /* FIXME: ignore dest_root? */
+    MVMCPointerBody *src_body = (MVMCPointerBody *)src;
+    MVMCPointerBody *dest_body = (MVMCPointerBody *)dest;
     dest_body->ptr = src_body->ptr;
 }
 
-/* This Parrot-specific addition to the API is used to free an object. */
-static void gc_free(PARROT_INTERP, PMC *obj) {
-    mem_sys_free(PMC_data(obj));
-    PMC_data(obj) = NULL;
+/* No need to free anything. */
+static void gc_free(MVMThreadContext *tc, MVMObject *obj) {
+    (void)tc, (void)obj;
 }
 
 /* Gets the storage specification for this representation. */
-static storage_spec get_storage_spec(PARROT_INTERP, STable *st) {
-    storage_spec spec;
-    spec.inlineable = STORAGE_SPEC_REFERENCE;
-    spec.boxed_primitive = STORAGE_SPEC_BP_NONE;
-    spec.can_box = 0;
-    spec.bits = sizeof(void *) * 8;
-    spec.align = ALIGNOF1(void *);
+static MVMStorageSpec get_storage_spec(MVMThreadContext *tc, MVMSTable *st) {
+    MVMStorageSpec spec;
+    spec.inlineable      = MVM_STORAGE_SPEC_REFERENCE;
+    spec.boxed_primitive = MVM_STORAGE_SPEC_BP_NONE;
+    spec.can_box         = 0;
+    spec.bits            = sizeof(void *) * 8;
+    spec.align           = ALIGNOF(void *);
     return spec;
 }
 
 /* Initializes the CPointer representation. */
-REPROps * CPointer_initialize(PARROT_INTERP,
+MVMREPROps * MVMCPointer_initialize(MVMThreadContext *tc,
         wrap_object_t wrap_object_func_ptr,
         create_stable_t create_stable_func_ptr) {
     /* Stash away functions passed wrapping functions. */
@@ -82,7 +84,7 @@ REPROps * CPointer_initialize(PARROT_INTERP,
     create_stable_func = create_stable_func_ptr;
 
     /* Allocate and populate the representation function table. */
-    this_repr = mem_allocate_zeroed_typed(REPROps);
+    this_repr = calloc(1, sizeof(MVMREPROps));
     this_repr->type_object_for = type_object_for;
     this_repr->compose = compose;
     this_repr->allocate = allocate;

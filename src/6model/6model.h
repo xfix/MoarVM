@@ -43,6 +43,10 @@ struct MVMStorageSpec {
      * storage they need. Ignored otherwise. */
     MVMuint16 bits;
 
+    /* For things that want to be inlined, the alignment requirement
+     * in bytes. Ignored otherwise. */
+    MVMuint16 align;
+
     /* For things that are inlined, if they are just storage of a
      * primitive type and can unbox, this says what primitive type
      * that they unbox to. */
