@@ -72,6 +72,10 @@ struct MVMStorageSpec {
 #define MVM_STORAGE_SPEC_CAN_BOX_STR    4
 #define MVM_STORAGE_SPEC_CAN_BOX_MASK   7
 
+/* Convert bit width to alignment-corrected byte size */
+#define MVM_STORAGE_SPEC_BYTES(ss) \
+    (((((ss).bits + 7) / 8 + (ss).align - 1) / (ss).align) * (ss).align)
+
 /* Flags that may be set on any collectable. */
 typedef enum {
     /* Is a type object (and thus not a concrete instance). */
