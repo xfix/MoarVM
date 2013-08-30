@@ -57,6 +57,7 @@ OBJECTS = src/core/args@obj@ \
           src/core/hll@obj@ \
           src/core/loadbytecode@obj@ \
           src/core/coerce@obj@ \
+          src/core/nativecall@obj@ \
           src/gc/orchestrate@obj@ \
           src/gc/allocation@obj@ \
           src/gc/worklist@obj@ \
@@ -134,6 +135,7 @@ HEADERS = src/moarvm.h \
           src/core/hll.h \
           src/core/loadbytecode.h \
           src/core/coerce.h \
+          src/core/nativecall.h \
           src/io/fileops.h \
           src/io/socketops.h \
           src/io/dirops.h \
@@ -178,7 +180,6 @@ HEADERS = src/moarvm.h \
           src/6model/reprs/CStr.h \
           src/6model/reprs/CStruct.h \
           src/6model/reprs/NativeCall.h \
-          src/6model/reprs/dyncall_reprs.h \
           src/6model/sc.h \
           src/strings/unicode_gen.h \
           src/strings/ascii.h \
