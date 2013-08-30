@@ -23,6 +23,9 @@ CINCLUDES = @ccinc@3rdparty/libuv/include \
             @ccinc@3rdparty/libtommath \
             @ccinc@3rdparty/sha1 \
             @ccinc@3rdparty/linenoise \
+            @ccinc@3rdparty/dyncall/dyncall \
+            @ccinc@3rdparty/dyncall/dyncallback \
+            @ccinc@3rdparty/dyncall/dynload \
             @ccinc@3rdparty \
             @ccinc@src
 LDFLAGS   = @ldflags@
