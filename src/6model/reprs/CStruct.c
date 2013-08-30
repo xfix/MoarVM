@@ -1,8 +1,5 @@
-#define PARROT_IN_EXTENSION
-#include "parrot/parrot.h"
-#include "parrot/extend.h"
-#include "../sixmodelobject.h"
-#include "dyncall_reprs.h"
+#include <moarvm.h>
+#include <core/nativecall.h>
 #include "CStruct.h"
 #include "CArray.h"
 #include "CPointer.h"

@@ -39,30 +39,35 @@ struct MVMCStructNameMap {
 /* The CStruct REPR data contains info we need to do allocations, look up
  * attributes and so forth. */
 struct MVMCStructREPRData {
+    /* FIXME: other integer types might be more appropriate */
+
     /* The size of the structure. */
-    INTVAL struct_size;
+    MVMuint32 struct_size;
+
+    /* The alignment requirement of the structure. */
+    MVMuint32 struct_align;
 
     /* The number of attributes we have allocated slots for. Note that
      * slots can vary in size. */
-    INTVAL num_attributes;
+    MVMuint32 num_attributes;
     
     /* Number of child objects we store. */
-    INTVAL num_child_objs;
+    MVMuint32 num_child_objs;
     
     /* Number of child strings we store. */
-    INTVAL num_child_strs;
+    MVMuint32 num_child_strs;
     
     /* Lower bits are flags indicating what kind of attribute we have;
      * whether it's one that is just a simple value that we can always
      * access directly in the C struct body, or a more complex one that
      * we need to maintain in the C struct and in the GC-able list. Upper
      * bits say where to find it. */
-    INTVAL *attribute_locations;
+    MVMuint32 *attribute_locations;
 
     /* Maps attribute position numbers to their location in the C struct.
      * Note that this will not be the only place we need to update for
      * any reference type. */
-    INTVAL *struct_offsets;
+    MVMuint32 *struct_offsets;
 
     /* If the attribute was actually flattened in to this object from another
      * representation, this is the s-table of the type of that attribute. NULL
@@ -79,7 +84,7 @@ struct MVMCStructREPRData {
 
     /* Slots holding flattened objects that need another REPR to initialize
      * them; terminated with -1. */
-    INTVAL *initialize_slots;
+    MVMint32 *initialize_slots;
 };
 
 /* Initializes the CStruct REPR. */

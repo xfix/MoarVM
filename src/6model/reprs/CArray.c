@@ -1,8 +1,14 @@
 #include <moarvm.h>
-#include "dyncall_reprs.h"
+#include <core/nativecall.h>
 #include "CArray.h"
 #include "CStruct.h"
 #include "CPointer.h"
+
+#define ALIGNOF(type) \
+    ((MVMuint16)offsetof(struct { char dummy; type member; }, member))
+
+typedef MVMObject * (* wrap_object_t) (MVMThreadContext *tc, void *obj);
+typedef MVMObject * (* create_stable_t) (MVMThreadContext *tc, MVMREPROps *REPR, MVMObject *HOW);
 
 /* This representation's function pointer table. */
 static MVMREPROps *this_repr;
@@ -13,7 +19,7 @@ static create_stable_t create_stable_func;
 
 /* Gets size and type information to put it into the REPR data. */
 static void fill_repr_data(MVMThreadContext *tc, MVMSTable *st) {
-    CArrayREPRData *repr_data = (CArrayREPRData *)st->REPR_data;
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
     MVMObject *old_ctx, *cappy;
     storage_spec ss;
     INTVAL type_id;
@@ -42,36 +48,36 @@ static void fill_repr_data(MVMThreadContext *tc, MVMSTable *st) {
     /* What we do next depends on what kind of type we have. */
     ss = REPR(repr_data->elem_type)->get_storage_spec(tc, STABLE(repr_data->elem_type));
     type_id = REPR(repr_data->elem_type)->ID;
-    if (ss.boxed_primitive == STORAGE_SPEC_BP_INT) {
+    if (ss.boxed_primitive == MVM_STORAGE_SPEC_BP_INT) {
         if (ss.bits == 8 || ss.bits == 16 || ss.bits == 32 || ss.bits == 64)
             repr_data->elem_size = ss.bits / 8;
         else
             Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
                 "CArray representation can only have 8, 16, 32 or 64 bit integer elements");
-        repr_data->elem_kind = CARRAY_ELEM_KIND_NUMERIC;
+        repr_data->elem_kind = MVM_CARRAY_ELEM_KIND_NUMERIC;
     }
-    else if (ss.boxed_primitive == STORAGE_SPEC_BP_NUM) {
+    else if (ss.boxed_primitive == MVM_STORAGE_SPEC_BP_NUM) {
         if (ss.bits == 32 || ss.bits == 64)
             repr_data->elem_size = ss.bits / 8;
         else
             Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
                 "CArray representation can only have 32 or 64 bit floating point elements");
-        repr_data->elem_kind = CARRAY_ELEM_KIND_NUMERIC;
+        repr_data->elem_kind = MVM_CARRAY_ELEM_KIND_NUMERIC;
     }
-    else if (ss.can_box & STORAGE_SPEC_CAN_BOX_STR) {
+    else if (ss.can_box & MVM_STORAGE_SPEC_CAN_BOX_STR) {
         repr_data->elem_size = sizeof(MVMObject *);
-        repr_data->elem_kind = CARRAY_ELEM_KIND_STRING;
+        repr_data->elem_kind = MVM_CARRAY_ELEM_KIND_STRING;
     }
     else if (type_id == get_ca_repr_id()) {
-        repr_data->elem_kind = CARRAY_ELEM_KIND_CARRAY;
+        repr_data->elem_kind = MVM_CARRAY_ELEM_KIND_CARRAY;
         repr_data->elem_size = sizeof(void *);
     }
     else if (type_id == get_cs_repr_id()) {
-        repr_data->elem_kind = CARRAY_ELEM_KIND_CSTRUCT;
+        repr_data->elem_kind = MVM_CARRAY_ELEM_KIND_CSTRUCT;
         repr_data->elem_size = sizeof(void *);
     }
     else if (type_id == get_cp_repr_id()) {
-        repr_data->elem_kind = CARRAY_ELEM_KIND_CPOINTER;
+        repr_data->elem_kind = MVM_CARRAY_ELEM_KIND_CPOINTER;
         repr_data->elem_size = sizeof(void *);
     }
     else {
@@ -84,14 +90,14 @@ static void fill_repr_data(MVMThreadContext *tc, MVMSTable *st) {
  * the given HOW. */
 static MVMObject * type_object_for(MVMThreadContext *tc, MVMObject *HOW) {
     /* Create new object instance. */
-    CArrayInstance *obj = mem_allocate_zeroed_typed(CArrayInstance);
+    MVMCArray *obj = mem_allocate_zeroed_typed(MVMCArray);
 
     /* Build an MVMSTable. */
     MVMObject *st_pmc = create_stable_func(tc, this_repr, HOW);
     MVMSTable *st  = STABLE_STRUCT(st_pmc);
     
     /* Create REPR data structure and hand it off the MVMSTable. */
-    st->REPR_data = mem_allocate_zeroed_typed(CArrayREPRData);
+    st->REPR_data = mem_allocate_zeroed_typed(MVMCArrayREPRData);
 
     /* Create type object and point it back at the MVMSTable. */
     obj->common.stable = st_pmc;
@@ -111,8 +117,8 @@ static void compose(MVMThreadContext *tc, MVMSTable *st, MVMObject *repr_info) {
 
 /* Creates a new instance based on the type object. */
 static MVMObject * allocate(MVMThreadContext *tc, MVMSTable *st) {
-    CArrayInstance *obj       = mem_allocate_zeroed_typed(CArrayInstance);
-    CArrayREPRData *repr_data = (CArrayREPRData *)st->REPR_data;
+    MVMCArray *obj       = mem_allocate_zeroed_typed(MVMCArray);
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
     obj->common.stable = st->stable_pmc;
     if (!repr_data->elem_size)
         fill_repr_data(tc, st);
@@ -123,27 +129,27 @@ static MVMObject * allocate(MVMThreadContext *tc, MVMSTable *st) {
 static void initialize(MVMThreadContext *tc, MVMSTable *st, void *data) {
     /* If we're initialized, presumably we're going to be
      * managing the memory in this array ourself. */
-    CArrayREPRData *repr_data = (CArrayREPRData *)st->REPR_data;
-    CArrayBody *body = (CArrayBody *)data;
-    body->storage = mem_sys_allocate(4 * repr_data->elem_size);
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
+    MVMCArrayBody *body = (MVMCArrayBody *)data;
+    body->storage = malloc(4 * repr_data->elem_size);
     body->managed = 1;
     /* Don't need child_objs for numerics or strings. */
-    if (repr_data->elem_kind == CARRAY_ELEM_KIND_NUMERIC)
+    if (repr_data->elem_kind == MVM_CARRAY_ELEM_KIND_NUMERIC)
         body->child_objs = NULL;
     else
-        body->child_objs = (MVMObject **) mem_sys_allocate_zeroed(4*sizeof(MVMObject *));
+        body->child_objs = calloc(4, sizeof(MVMObject *));
     body->allocated = 4;
     body->elems = 0;
 }
 
 /* Copies to the body of one object to another. */
 static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, void *dest) {
-    CArrayREPRData *repr_data = (CArrayREPRData *)st->REPR_data;
-    CArrayBody     *src_body  = (CArrayBody *)src;
-    CArrayBody     *dest_body = (CArrayBody *)dest;
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
+    MVMCArrayBody     *src_body  = (MVMCArrayBody *)src;
+    MVMCArrayBody     *dest_body = (MVMCArrayBody *)dest;
     if (src_body->managed) {
         INTVAL alsize = src_body->allocated * repr_data->elem_size;
-        dest_body->storage = mem_sys_allocate(alsize);
+        dest_body->storage = malloc(alsize);
         memcpy(dest_body->storage, src_body->storage, alsize);
     }
     else {
@@ -157,7 +163,7 @@ static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, void *dest) 
 /* This is called to do any cleanup of resources when an object gets
  * embedded inside another one. Never called on a top-level object. */
 static void gc_cleanup(MVMThreadContext *tc, MVMSTable *st, void *data) {
-    CArrayBody *body = (CArrayBody *)data;
+    MVMCArrayBody *body = (MVMCArrayBody *)data;
     if (body->managed) {
         mem_sys_free(body->storage);
         if (body->child_objs)
@@ -168,14 +174,14 @@ static void gc_cleanup(MVMThreadContext *tc, MVMSTable *st, void *data) {
 /* This Parrot-specific addition to the API is used to free an object. */
 static void gc_free(MVMThreadContext *tc, MVMObject *obj) {
     gc_cleanup(tc, STABLE(obj), OBJECT_BODY(obj));
-    mem_sys_free(MVMObject_data(obj));
+    free(MVMObject_data(obj));
     MVMObject_data(obj) = NULL;
 }
 
 static void gc_mark(MVMThreadContext *tc, MVMSTable *st, void *data) {
-    CArrayREPRData *repr_data = (CArrayREPRData *) st->REPR_data;
-    CArrayBody *body = (CArrayBody *)data;
-    INTVAL i;
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *) st->REPR_data;
+    MVMCArrayBody *body = (MVMCArrayBody *)data;
+    MVMuint64 i;
 
     /* Don't traverse child_objs list if there isn't one. */
     if (!body->child_objs) return;
@@ -188,11 +194,11 @@ static void gc_mark(MVMThreadContext *tc, MVMSTable *st, void *data) {
 /* Gets the storage specification for this representation. */
 static storage_spec get_storage_spec(MVMThreadContext *tc, MVMSTable *st) {
     storage_spec spec;
-    spec.inlineable = STORAGE_SPEC_REFERENCE;
-    spec.boxed_primitive = STORAGE_SPEC_BP_NONE;
+    spec.inlineable = MVM_STORAGE_SPEC_REFERENCE;
+    spec.boxed_primitive = MVM_STORAGE_SPEC_BP_NONE;
     spec.can_box = 0;
     spec.bits = sizeof(void *) * 8;
-    spec.align = ALIGNOF1(void *);
+    spec.align = ALIGNOF(void *);
     return spec;
 }
 
@@ -201,7 +207,7 @@ static void die_pos_nyi(MVMThreadContext *tc) {
     Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
         "CArray representation does not fully positional storage yet");
 }
-static void expand(MVMThreadContext *tc, CArrayREPRData *repr_data, CArrayBody *body, INTVAL min_size) {
+static void expand(MVMThreadContext *tc, MVMCArrayREPRData *repr_data, MVMCArrayBody *body, INTVAL min_size) {
     INTVAL is_complex = 0;
     INTVAL next_size = body->allocated? 2 * body->allocated: 4;
     if (min_size > next_size)
@@ -209,17 +215,17 @@ static void expand(MVMThreadContext *tc, CArrayREPRData *repr_data, CArrayBody *
     if (body->managed)
         body->storage = mem_sys_realloc(body->storage, next_size * repr_data->elem_size);
 
-    is_complex = (repr_data->elem_kind == CARRAY_ELEM_KIND_CARRAY
-               || repr_data->elem_kind == CARRAY_ELEM_KIND_CPOINTER
-               || repr_data->elem_kind == CARRAY_ELEM_KIND_CSTRUCT
-               || repr_data->elem_kind == CARRAY_ELEM_KIND_STRING);
+    is_complex = (repr_data->elem_kind == MVM_CARRAY_ELEM_KIND_CARRAY
+               || repr_data->elem_kind == MVM_CARRAY_ELEM_KIND_CPOINTER
+               || repr_data->elem_kind == MVM_CARRAY_ELEM_KIND_CSTRUCT
+               || repr_data->elem_kind == MVM_CARRAY_ELEM_KIND_STRING);
     if (is_complex)
         body->child_objs = (MVMObject **) mem_sys_realloc_zeroed(body->child_objs, next_size * sizeof(MVMObject *), body->allocated * sizeof(MVMObject *));
     body->allocated = next_size;
 }
 static void at_pos_native(MVMThreadContext *tc, MVMSTable *st, void *data, INTVAL index, NativeValue *value) {
-    CArrayREPRData *repr_data = (CArrayREPRData *)st->REPR_data;
-    CArrayBody     *body      = (CArrayBody *)data;
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
+    MVMCArrayBody     *body      = (MVMCArrayBody *)data;
     MVMSTable         *type_st   = STABLE(repr_data->elem_type);
     void           *ptr       = ((char *)body->storage) + index * repr_data->elem_size;
     if (body->managed && index >= body->elems) {
@@ -241,7 +247,7 @@ static void at_pos_native(MVMThreadContext *tc, MVMSTable *st, void *data, INTVA
         }
     }
     switch (repr_data->elem_kind) {
-        case CARRAY_ELEM_KIND_NUMERIC:
+        case MVM_CARRAY_ELEM_KIND_NUMERIC:
             switch (value->type) {
             case NATIVE_VALUE_INT:
                 value->value.intval = type_st->REPR->box_funcs->get_int(tc, type_st, ptr);
@@ -263,12 +269,12 @@ static void at_pos_native(MVMThreadContext *tc, MVMSTable *st, void *data, INTVA
     }
 }
 static MVMObject * make_object(MVMThreadContext *tc, MVMSTable *st, void *data) {
-    CArrayREPRData *repr_data = (CArrayREPRData *)st->REPR_data;
-    CArrayBody     *body      = (CArrayBody *)data;
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
+    MVMCArrayBody     *body      = (MVMCArrayBody *)data;
     MVMObject            *retval;
 
     switch (repr_data->elem_kind) {
-        case CARRAY_ELEM_KIND_STRING:
+        case MVM_CARRAY_ELEM_KIND_STRING:
         {
             char   *elem = (char *) data;
             STRING *str  = Parrot_str_new_init(tc, elem, strlen(elem), Parrot_utf8_encoding_ptr, 0);
@@ -279,13 +285,13 @@ static MVMObject * make_object(MVMThreadContext *tc, MVMSTable *st, void *data) 
             retval = obj;
             break;
         }
-        case CARRAY_ELEM_KIND_CARRAY:
+        case MVM_CARRAY_ELEM_KIND_CARRAY:
             retval = make_carray_result(tc, repr_data->elem_type, data);
             break;
-        case CARRAY_ELEM_KIND_CPOINTER:
+        case MVM_CARRAY_ELEM_KIND_CPOINTER:
             retval = make_cpointer_result(tc, repr_data->elem_type, data);
             break;
-        case CARRAY_ELEM_KIND_CSTRUCT:
+        case MVM_CARRAY_ELEM_KIND_CSTRUCT:
             retval = make_cstruct_result(tc, repr_data->elem_type, data);
             break;
         default:
@@ -296,16 +302,16 @@ static MVMObject * make_object(MVMThreadContext *tc, MVMSTable *st, void *data) 
     return retval;
 }
 static MVMObject * at_pos_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, INTVAL index) {
-    CArrayREPRData *repr_data = (CArrayREPRData *)st->REPR_data;
-    CArrayBody     *body      = (CArrayBody *)data;
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
+    MVMCArrayBody     *body      = (MVMCArrayBody *)data;
     void **storage            = (void **) body->storage;
     MVMObject *obj;
 
     switch (repr_data->elem_kind) {
-        case CARRAY_ELEM_KIND_STRING:
-        case CARRAY_ELEM_KIND_CARRAY:
-        case CARRAY_ELEM_KIND_CPOINTER:
-        case CARRAY_ELEM_KIND_CSTRUCT:
+        case MVM_CARRAY_ELEM_KIND_STRING:
+        case MVM_CARRAY_ELEM_KIND_CARRAY:
+        case MVM_CARRAY_ELEM_KIND_CPOINTER:
+        case MVM_CARRAY_ELEM_KIND_CSTRUCT:
             break;
         default:
             Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
@@ -355,8 +361,8 @@ static MVMObject * at_pos_boxed(MVMThreadContext *tc, MVMSTable *st, void *data,
     }
 }
 static void bind_pos_native(MVMThreadContext *tc, MVMSTable *st, void *data, INTVAL index, NativeValue *value) {
-    CArrayREPRData *repr_data = (CArrayREPRData *)st->REPR_data;
-    CArrayBody     *body      = (CArrayBody *)data;
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
+    MVMCArrayBody     *body      = (MVMCArrayBody *)data;
     MVMSTable         *type_st   = STABLE(repr_data->elem_type);
     void           *ptr       = ((char *)body->storage) + index * repr_data->elem_size;
     if (body->managed && index >= body->allocated)
@@ -364,7 +370,7 @@ static void bind_pos_native(MVMThreadContext *tc, MVMSTable *st, void *data, INT
     if (index >= body->elems)
         body->elems = index + 1;
     switch (repr_data->elem_kind) {
-        case CARRAY_ELEM_KIND_NUMERIC:
+        case MVM_CARRAY_ELEM_KIND_NUMERIC:
             switch (value->type) {
             case NATIVE_VALUE_INT:
                 type_st->REPR->box_funcs->set_int(tc, type_st, ptr, value->value.intval);
@@ -386,8 +392,8 @@ static void bind_pos_native(MVMThreadContext *tc, MVMSTable *st, void *data, INT
     }
 }
 static void bind_pos_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, INTVAL index, MVMObject *obj) {
-    CArrayREPRData *repr_data = (CArrayREPRData *)st->REPR_data;
-    CArrayBody     *body      = (CArrayBody *)data;
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
+    MVMCArrayBody     *body      = (MVMCArrayBody *)data;
     void **storage = (void **) body->storage;
     void *cptr; /* Pointer to C data. */
 
@@ -399,10 +405,10 @@ static void bind_pos_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, INTV
 
     /* Make sure the type isn't something we can't handle. */
     switch (repr_data->elem_kind) {
-        case CARRAY_ELEM_KIND_STRING:
-        case CARRAY_ELEM_KIND_CARRAY:
-        case CARRAY_ELEM_KIND_CSTRUCT:
-        case CARRAY_ELEM_KIND_CPOINTER:
+        case MVM_CARRAY_ELEM_KIND_STRING:
+        case MVM_CARRAY_ELEM_KIND_CARRAY:
+        case MVM_CARRAY_ELEM_KIND_CSTRUCT:
+        case MVM_CARRAY_ELEM_KIND_CPOINTER:
             break;
         default:
             Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
@@ -411,19 +417,19 @@ static void bind_pos_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, INTV
 
     if (IS_CONCRETE(obj)) {
         switch (repr_data->elem_kind) {
-            case CARRAY_ELEM_KIND_STRING:
+            case MVM_CARRAY_ELEM_KIND_STRING:
             {
                 STRING *str  = REPR(obj)->box_funcs->get_str(tc, STABLE(obj), OBJECT_BODY(obj));
                 cptr = Parrot_str_to_encoded_cstring(tc, str, Parrot_utf8_encoding_ptr);
                 break;
             }
-            case CARRAY_ELEM_KIND_CARRAY:
-                cptr = ((CArrayBody *) OBJECT_BODY(obj))->storage;
+            case MVM_CARRAY_ELEM_KIND_CARRAY:
+                cptr = ((MVMCArrayBody *) OBJECT_BODY(obj))->storage;
                 break;
-            case CARRAY_ELEM_KIND_CSTRUCT:
+            case MVM_CARRAY_ELEM_KIND_CSTRUCT:
                 cptr = ((CStructBody *) OBJECT_BODY(obj))->cstruct;
                 break;
-            case CARRAY_ELEM_KIND_CPOINTER:
+            case MVM_CARRAY_ELEM_KIND_CPOINTER:
                 cptr = ((CPointerBody *) OBJECT_BODY(obj))->ptr;
                 break;
             default:
@@ -439,7 +445,7 @@ static void bind_pos_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, INTV
     storage[index] = cptr;
 }
 static MVMSTable * get_elem_stable(MVMThreadContext *tc, MVMSTable *st) {
-    CArrayREPRData *repr_data = (CArrayREPRData *)st->REPR_data;
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
     return STABLE(repr_data->elem_type);
 }
 static void push_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, MVMObject *obj) {
@@ -455,7 +461,7 @@ static MVMObject * shift_boxed(MVMThreadContext *tc, MVMSTable *st, void *data) 
     die_pos_nyi(tc);
 }
 static INTVAL elems(MVMThreadContext *tc, MVMSTable *st, void *data) {
-    CArrayBody     *body      = (CArrayBody *)data;
+    MVMCArrayBody     *body      = (MVMCArrayBody *)data;
     if (body->managed)
         return body->elems;
     Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
@@ -464,7 +470,7 @@ static INTVAL elems(MVMThreadContext *tc, MVMSTable *st, void *data) {
 
 /* Serializes the REPR data. */
 static void serialize_repr_data(MVMThreadContext *tc, MVMSTable *st, SerializationWriter *writer) {
-    CArrayREPRData *repr_data = (CArrayREPRData *)st->REPR_data;
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
     writer->write_int(tc, writer, repr_data->elem_size);
     writer->write_ref(tc, writer, repr_data->elem_type);
     writer->write_int(tc, writer, repr_data->elem_kind);
@@ -472,15 +478,15 @@ static void serialize_repr_data(MVMThreadContext *tc, MVMSTable *st, Serializati
 
 /* Deserializes the REPR data. */
 static void deserialize_repr_data(MVMThreadContext *tc, MVMSTable *st, SerializationReader *reader) {
-    CArrayREPRData *repr_data = (CArrayREPRData *) mem_sys_allocate_zeroed(sizeof(CArrayREPRData));
-    st->REPR_data = (CArrayREPRData *) repr_data;
+    MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *) mem_sys_allocate_zeroed(sizeof(MVMCArrayREPRData));
+    st->REPR_data = (MVMCArrayREPRData *) repr_data;
     repr_data->elem_size = reader->read_int(tc, reader);
     repr_data->elem_type = reader->read_ref(tc, reader);
     repr_data->elem_kind = reader->read_int(tc, reader);
 }
 
 /* Initializes the CArray representation. */
-MVMREPROps * CArray_initialize(MVMThreadContext *tc,
+MVMREPROps * MVMCArray_initialize(MVMThreadContext *tc,
         wrap_object_t wrap_object_func_ptr,
         create_stable_t create_stable_func_ptr) {
     /* Stash away functions passed wrapping functions. */

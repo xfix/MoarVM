@@ -51,5 +51,3 @@ struct MVMCArrayREPRData {
 MVMREPROps * MVMCArray_initialize(MVMThreadContext *tc,
         MVMObject * (* wrap_object_func_ptr) (MVMThreadContext *tc, void *obj),
         MVMObject * (* create_stable_func_ptr) (MVMThreadContext *tc, MVMREPROps *REPR, MVMObject *HOW));
-
-#endif
