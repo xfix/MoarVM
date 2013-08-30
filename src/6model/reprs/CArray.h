@@ -8,16 +8,16 @@ struct MVMCArrayBody {
 
     /* Are we managing the memory for this array ourselves, or does it come
      * from C? */
-    INTVAL managed;
+    MVMuint16 managed;
 
     /* The number of elements we've allocated. If we do not know,
      * because the array was returned to us from elsewhere and we
      * are not managing it's memory, this is 0. */
-    INTVAL allocated;
+    MVMuint16 allocated;
 
     /* The number of elements we have, if known. Invalid if we
      * are not managing the array. */
-    INTVAL elems;
+    MVMuint64 elems;
 };
 
 /* This is how an instance with the CArray representation looks. */
@@ -37,14 +37,14 @@ struct MVMCArray {
  * that we have. */
 struct MVMCArrayREPRData {
     /* The number of bytes in size that an element is. */
-    INTVAL elem_size;
+    MVMuint64 elem_size;
 
     /* The type of an element. */
     MVMObject *elem_type;
     
     /* What kind of element is it (lets us quickly know how to handle access
      * to it). */
-    INTVAL elem_kind;
+    MVMint16 elem_kind;
 };
 
 /* Initializes the CArray REPR. */

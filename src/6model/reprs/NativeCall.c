@@ -1,11 +1,8 @@
-#define PARROT_IN_EXTENSION
-#include "parrot/parrot.h"
-#include "parrot/extend.h"
-#include "../sixmodelobject.h"
+#include <moarvm.h>
 #include "NativeCall.h"
 
 /* This representation's function pointer table. */
-static REPROps *this_repr;
+static MVMREPROps *this_repr;
 
 /* Some functions we have to get references to. */
 static wrap_object_t   wrap_object_func;
@@ -13,18 +10,18 @@ static create_stable_t create_stable_func;
 
 /* Creates a new type object of this representation, and associates it with
  * the given HOW. */
-static PMC * type_object_for(PARROT_INTERP, PMC *HOW) {
+static MVMObject * type_object_for(MVMThreadContext *tc, MVMObject *HOW) {
     /* Create new object instance. */
     NativeCallInstance *obj = mem_allocate_zeroed_typed(NativeCallInstance);
 
-    /* Build an STable. */
-    PMC *st_pmc = create_stable_func(interp, this_repr, HOW);
-    STable *st  = STABLE_STRUCT(st_pmc);
+    /* Build an MVMSTable. */
+    MVMObject *st_pmc = create_stable_func(tc, this_repr, HOW);
+    MVMSTable *st  = STABLE_STRUCT(st_pmc);
 
-    /* Create type object and point it back at the STable. */
+    /* Create type object and point it back at the MVMSTable. */
     obj->common.stable = st_pmc;
-    st->WHAT = wrap_object_func(interp, obj);
-    PARROT_GC_WRITE_BARRIER(interp, st_pmc);
+    st->WHAT = wrap_object_func(tc, obj);
+    PARROT_GC_WRITE_BARRIER(tc, st_pmc);
 
     /* Flag it as a type object. */
     MARK_AS_TYPE_OBJECT(st->WHAT);
@@ -33,24 +30,24 @@ static PMC * type_object_for(PARROT_INTERP, PMC *HOW) {
 }
 
 /* Composes the representation. */
-static void compose(PARROT_INTERP, STable *st, PMC *repr_info) {
+static void compose(MVMThreadContext *tc, MVMSTable *st, MVMObject *repr_info) {
     /* Nothing to do. */
 }
 
 /* Creates a new instance based on the type object. */
-static PMC * allocate(PARROT_INTERP, STable *st) {
+static MVMObject * allocate(MVMThreadContext *tc, MVMSTable *st) {
     NativeCallInstance *obj = mem_allocate_zeroed_typed(NativeCallInstance);
     obj->common.stable = st->stable_pmc;
-    return wrap_object_func(interp, obj);
+    return wrap_object_func(tc, obj);
 }
 
 /* Initialize a new instance. */
-static void initialize(PARROT_INTERP, STable *st, void *data) {
+static void initialize(MVMThreadContext *tc, MVMSTable *st, void *data) {
     /* Nothing to do here. */
 }
 
 /* Copies to the body of one object to another. */
-static void copy_to(PARROT_INTERP, STable *st, void *src, void *dest) {
+static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, void *dest) {
     NativeCallBody *src_body = (NativeCallBody *)src;
     NativeCallBody *dest_body = (NativeCallBody *)dest;
     
@@ -74,7 +71,7 @@ static void copy_to(PARROT_INTERP, STable *st, void *src, void *dest) {
 
 /* This is called to do any cleanup of resources when an object gets
  * embedded inside another one. Never called on a top-level object. */
-static void gc_cleanup(PARROT_INTERP, STable *st, void *data) {
+static void gc_cleanup(MVMThreadContext *tc, MVMSTable *st, void *data) {
     NativeCallBody *body = (NativeCallBody *)data;
     if (body->lib_name)
         Parrot_str_free_cstring(body->lib_name);
@@ -87,26 +84,26 @@ static void gc_cleanup(PARROT_INTERP, STable *st, void *data) {
 }
 
 /* This Parrot-specific addition to the API is used to free an object. */
-static void gc_free(PARROT_INTERP, PMC *obj) {
-    gc_cleanup(interp, STABLE(obj), OBJECT_BODY(obj));
-    mem_sys_free(PMC_data(obj));
-    PMC_data(obj) = NULL;
+static void gc_free(MVMThreadContext *tc, MVMObject *obj) {
+    gc_cleanup(tc, STABLE(obj), OBJECT_BODY(obj));
+    mem_sys_free(MVMObject_data(obj));
+    MVMObject_data(obj) = NULL;
 }
 
-static void gc_mark(PARROT_INTERP, STable *st, void *data) {
+static void gc_mark(MVMThreadContext *tc, MVMSTable *st, void *data) {
     NativeCallBody *body = (NativeCallBody *)data;
 
     if (body->arg_info) {
         INTVAL i;
         for (i = 0; i < body->num_args; i++) {
             if (body->arg_info[i])
-                Parrot_gc_mark_PMC_alive(interp, body->arg_info[i]);
+                Parrot_gc_mark_PMC_alive(tc, body->arg_info[i]);
         }
     }
 }
 
 /* Gets the storage specification for this representation. */
-static storage_spec get_storage_spec(PARROT_INTERP, STable *st) {
+static storage_spec get_storage_spec(MVMThreadContext *tc, MVMSTable *st) {
     storage_spec spec;
     spec.inlineable = STORAGE_SPEC_INLINED;
     spec.bits = sizeof(NativeCallBody) * 8;
@@ -119,13 +116,13 @@ static storage_spec get_storage_spec(PARROT_INTERP, STable *st) {
 /* We can't actually serialize the handle, but since this REPR gets inlined
  * we just do nothing here since it may well have never been opened. Various
  * more involved approaches are possible... */
-static void serialize(PARROT_INTERP, STable *st, void *data, SerializationWriter *writer) {
+static void serialize(MVMThreadContext *tc, MVMSTable *st, void *data, SerializationWriter *writer) {
 }
-static void deserialize(PARROT_INTERP, STable *st, void *data, SerializationReader *reader) {
+static void deserialize(MVMThreadContext *tc, MVMSTable *st, void *data, SerializationReader *reader) {
 }
 
 /* Initializes the NativeCall representation. */
-REPROps * NativeCall_initialize(PARROT_INTERP,
+MVMREPROps * NativeCall_initialize(MVMThreadContext *tc,
         wrap_object_t wrap_object_func_ptr,
         create_stable_t create_stable_func_ptr) {
     /* Stash away functions passed wrapping functions. */
@@ -133,7 +130,7 @@ REPROps * NativeCall_initialize(PARROT_INTERP,
     create_stable_func = create_stable_func_ptr;
 
     /* Allocate and populate the representation function table. */
-    this_repr = mem_allocate_zeroed_typed(REPROps);
+    this_repr = mem_allocate_zeroed_typed(MVMREPROps);
     this_repr->type_object_for = type_object_for;
     this_repr->compose = compose;
     this_repr->allocate = allocate;
