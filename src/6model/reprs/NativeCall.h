@@ -4,13 +4,13 @@
 
 /* Body of a NativeCall. */
 struct MVMNativeCallBody {
-    char *lib_name;
-    DLLib *lib_handle;
-    void *entry_point;
-    INTVAL convention;
-    INTVAL num_args;
-    INTVAL *arg_types;
-    INTVAL ret_type;
+    char       *lib_name;
+    DLLib      *lib_handle;
+    void       *entry_point;
+    MVMuint16   convention;
+    MVMuint16   num_args;
+    MVMuint16  *arg_types;
+    MVMuint16   ret_type;
     MVMObject **arg_info;
 };
 
