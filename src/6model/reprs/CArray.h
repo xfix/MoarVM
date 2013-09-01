@@ -13,7 +13,7 @@ struct MVMCArrayBody {
     /* The number of elements we've allocated. If we do not know,
      * because the array was returned to us from elsewhere and we
      * are not managing it's memory, this is 0. */
-    MVMuint16 allocated;
+    MVMuint64 allocated;
 
     /* The number of elements we have, if known. Invalid if we
      * are not managing the array. */

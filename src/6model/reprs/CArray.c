@@ -19,17 +19,17 @@ static create_stable_t create_stable_func;
 
 /* Gets size and type information to put it into the REPR data. */
 static void fill_repr_data(MVMThreadContext *tc, MVMSTable *st) {
+#if 0
     MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
     MVMObject *old_ctx, *cappy;
-    storage_spec ss;
-    INTVAL type_id;
+    MVMStorageSpec ss;
+    MVMuint16 type_id;
 
     /* Look up "of" method. */
-    MVMObject *meth = VTABLE_find_method(tc, st->WHAT,
+    MVMObject *meth = MVM_6model_find_method(tc, st->WHAT,
         Parrot_str_new_constant(tc, "of"));
-    if (MVMObject_IS_NULL(meth))
-        Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-            "CArray representation expects an 'of' method, specifying the element type");
+    if (!meth)
+        MVM_exception_throw_adhoc(tc, "CArray representation expects an 'of' method, specifying the element type");
 
     /* Call it to get the type. */
     old_ctx = Parrot_pcc_get_signature(tc, CURRENT_CONTEXT(tc));
@@ -42,8 +42,7 @@ static void fill_repr_data(MVMThreadContext *tc, MVMSTable *st) {
     
     /* Ensure we got a type. */
     if (MVMObject_IS_NULL(repr_data->elem_type))
-        Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-            "CArray representation expects an 'of' method, specifying the element type");
+        MVM_exception_throw_adhoc(tc, "CArray representation expects an 'of' method, specifying the element type");
 
     /* What we do next depends on what kind of type we have. */
     ss = REPR(repr_data->elem_type)->get_storage_spec(tc, STABLE(repr_data->elem_type));
@@ -52,16 +51,14 @@ static void fill_repr_data(MVMThreadContext *tc, MVMSTable *st) {
         if (ss.bits == 8 || ss.bits == 16 || ss.bits == 32 || ss.bits == 64)
             repr_data->elem_size = ss.bits / 8;
         else
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                "CArray representation can only have 8, 16, 32 or 64 bit integer elements");
+            MVM_exception_throw_adhoc(tc, "CArray representation can only have 8, 16, 32 or 64 bit integer elements");
         repr_data->elem_kind = MVM_CARRAY_ELEM_KIND_NUMERIC;
     }
     else if (ss.boxed_primitive == MVM_STORAGE_SPEC_BP_NUM) {
         if (ss.bits == 32 || ss.bits == 64)
             repr_data->elem_size = ss.bits / 8;
         else
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                "CArray representation can only have 32 or 64 bit floating point elements");
+            MVM_exception_throw_adhoc(tc, "CArray representation can only have 32 or 64 bit floating point elements");
         repr_data->elem_kind = MVM_CARRAY_ELEM_KIND_NUMERIC;
     }
     else if (ss.can_box & MVM_STORAGE_SPEC_CAN_BOX_STR) {
@@ -81,31 +78,28 @@ static void fill_repr_data(MVMThreadContext *tc, MVMSTable *st) {
         repr_data->elem_size = sizeof(void *);
     }
     else {
-        Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-            "CArray may only contain native integers and numbers, strings, C Structs or C Pointers");
+        MVM_exception_throw_adhoc(tc, "CArray may only contain native integers and numbers, strings, C Structs or C Pointers");
     }
+#endif
 }
 
 /* Creates a new type object of this representation, and associates it with
  * the given HOW. */
 static MVMObject * type_object_for(MVMThreadContext *tc, MVMObject *HOW) {
-    /* Create new object instance. */
-    MVMCArray *obj = mem_allocate_zeroed_typed(MVMCArray);
+    MVMSTable *st = MVM_gc_allocate_stable(tc, this_repr, HOW);
 
-    /* Build an MVMSTable. */
-    MVMObject *st_pmc = create_stable_func(tc, this_repr, HOW);
-    MVMSTable *st  = STABLE_STRUCT(st_pmc);
-    
-    /* Create REPR data structure and hand it off the MVMSTable. */
-    st->REPR_data = mem_allocate_zeroed_typed(MVMCArrayREPRData);
+    MVMROOT(tc, st, {
+        MVMObject *obj = MVM_gc_allocate_type_object(tc, st);
 
-    /* Create type object and point it back at the MVMSTable. */
-    obj->common.stable = st_pmc;
-    st->WHAT = wrap_object_func(tc, obj);
-    PARROT_GC_WRITE_BARRIER(tc, st_pmc);
+        MVM_ASSIGN_REF(tc, st, st->WHAT, obj);
+        st->size = sizeof(MVMCArray);
 
-    /* Flag it as a type object. */
-    MARK_AS_TYPE_OBJECT(st->WHAT);
+        /* Create REPR data structure and hand it off the MVMSTable. */
+        st->REPR_data = calloc(1, sizeof(MVMCArrayREPRData));
+
+        /* FIXME??? */
+        st->WHAT = wrap_object_func(tc, obj);
+    });
 
     return st->WHAT;
 }
@@ -117,9 +111,9 @@ static void compose(MVMThreadContext *tc, MVMSTable *st, MVMObject *repr_info) {
 
 /* Creates a new instance based on the type object. */
 static MVMObject * allocate(MVMThreadContext *tc, MVMSTable *st) {
-    MVMCArray *obj       = mem_allocate_zeroed_typed(MVMCArray);
+    MVMCArray *obj = calloc(1, sizeof(MVMCArray));
     MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
-    obj->common.stable = st->stable_pmc;
+    obj->common.st = st;
     if (!repr_data->elem_size)
         fill_repr_data(tc, st);
     return wrap_object_func(tc, obj);
@@ -148,7 +142,7 @@ static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, void *dest) 
     MVMCArrayBody     *src_body  = (MVMCArrayBody *)src;
     MVMCArrayBody     *dest_body = (MVMCArrayBody *)dest;
     if (src_body->managed) {
-        INTVAL alsize = src_body->allocated * repr_data->elem_size;
+        MVMuint64 alsize = src_body->allocated * repr_data->elem_size;
         dest_body->storage = malloc(alsize);
         memcpy(dest_body->storage, src_body->storage, alsize);
     }
@@ -165,9 +159,9 @@ static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, void *dest) 
 static void gc_cleanup(MVMThreadContext *tc, MVMSTable *st, void *data) {
     MVMCArrayBody *body = (MVMCArrayBody *)data;
     if (body->managed) {
-        mem_sys_free(body->storage);
+        free(body->storage);
         if (body->child_objs)
-            mem_sys_free(body->child_objs);
+            free(body->child_objs);
     }
 }
 
@@ -192,8 +186,8 @@ static void gc_mark(MVMThreadContext *tc, MVMSTable *st, void *data) {
 }
 
 /* Gets the storage specification for this representation. */
-static storage_spec get_storage_spec(MVMThreadContext *tc, MVMSTable *st) {
-    storage_spec spec;
+static MVMStorageSpec get_storage_spec(MVMThreadContext *tc, MVMSTable *st) {
+    MVMStorageSpec spec;
     spec.inlineable = MVM_STORAGE_SPEC_REFERENCE;
     spec.boxed_primitive = MVM_STORAGE_SPEC_BP_NONE;
     spec.can_box = 0;
@@ -202,25 +196,28 @@ static storage_spec get_storage_spec(MVMThreadContext *tc, MVMSTable *st) {
     return spec;
 }
 
-PARROT_DOES_NOT_RETURN
+MVM_NO_RETURN
 static void die_pos_nyi(MVMThreadContext *tc) {
-    Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-        "CArray representation does not fully positional storage yet");
+    MVM_exception_throw_adhoc(tc, "CArray representation does not fully positional storage yet");
 }
 static void expand(MVMThreadContext *tc, MVMCArrayREPRData *repr_data, MVMCArrayBody *body, INTVAL min_size) {
-    INTVAL is_complex = 0;
-    INTVAL next_size = body->allocated? 2 * body->allocated: 4;
+    int is_complex = 0;
+    MVMuint64 next_size = body->allocated ? 2 * body->allocated : 4;
     if (min_size > next_size)
         next_size = min_size;
     if (body->managed)
-        body->storage = mem_sys_realloc(body->storage, next_size * repr_data->elem_size);
+        body->storage = realloc(body->storage, next_size * repr_data->elem_size);
 
     is_complex = (repr_data->elem_kind == MVM_CARRAY_ELEM_KIND_CARRAY
                || repr_data->elem_kind == MVM_CARRAY_ELEM_KIND_CPOINTER
                || repr_data->elem_kind == MVM_CARRAY_ELEM_KIND_CSTRUCT
                || repr_data->elem_kind == MVM_CARRAY_ELEM_KIND_STRING);
-    if (is_complex)
-        body->child_objs = (MVMObject **) mem_sys_realloc_zeroed(body->child_objs, next_size * sizeof(MVMObject *), body->allocated * sizeof(MVMObject *));
+    if (is_complex) {
+        MVMuint64 bytes = body->allocated * sizeof(MVMObject *);
+        MVMuint64 next_bytes = next_size * sizeof(MVMObject *);
+        body->child_objs = realloc(body->child_objs, next_bytes);
+        memset((char *)body->child_objs + bytes, 0, next_bytes - bytes);
+    }
     body->allocated = next_size;
 }
 static void at_pos_native(MVMThreadContext *tc, MVMSTable *st, void *data, INTVAL index, NativeValue *value) {
@@ -242,8 +239,7 @@ static void at_pos_native(MVMThreadContext *tc, MVMSTable *st, void *data, INTVA
             value->value.stringval = STRINGNULL;
             return;
         default:
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                "Bad value of NativeValue.type: %d", value->type);
+            MVM_exception_throw_adhoc(tc, "Bad value of NativeValue.type: %d", value->type);
         }
     }
     switch (repr_data->elem_kind) {
@@ -259,13 +255,11 @@ static void at_pos_native(MVMThreadContext *tc, MVMSTable *st, void *data, INTVA
                 value->value.stringval = type_st->REPR->box_funcs->get_str(tc, type_st, ptr);
                 break;
             default:
-                Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                    "Bad value of NativeValue.type: %d", value->type);
+                MVM_exception_throw_adhoc(tc, "Bad value of NativeValue.type: %d", value->type);
             }
             break;
         default:
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                "at_pos_native on CArray REPR only usable with numeric element types");
+            MVM_exception_throw_adhoc(tc, "at_pos_native on CArray REPR only usable with numeric element types");
     }
 }
 static MVMObject * make_object(MVMThreadContext *tc, MVMSTable *st, void *data) {
@@ -277,7 +271,7 @@ static MVMObject * make_object(MVMThreadContext *tc, MVMSTable *st, void *data) 
         case MVM_CARRAY_ELEM_KIND_STRING:
         {
             char   *elem = (char *) data;
-            STRING *str  = Parrot_str_new_init(tc, elem, strlen(elem), Parrot_utf8_encoding_ptr, 0);
+            MVMString *str  = Parrot_str_new_init(tc, elem, strlen(elem), Parrot_utf8_encoding_ptr, 0);
             MVMObject    *obj  = REPR(repr_data->elem_type)->allocate(tc, STABLE(repr_data->elem_type));
             REPR(obj)->initialize(tc, STABLE(obj), OBJECT_BODY(obj));
             REPR(obj)->box_funcs->set_str(tc, STABLE(obj), OBJECT_BODY(obj), str);
@@ -295,8 +289,7 @@ static MVMObject * make_object(MVMThreadContext *tc, MVMSTable *st, void *data) 
             retval = make_cstruct_result(tc, repr_data->elem_type, data);
             break;
         default:
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                "Fatal error: unknown CArray elem_kind (%d) in make_object", repr_data->elem_kind);
+            MVM_exception_throw_adhoc(tc, "Fatal error: unknown CArray elem_kind (%d) in make_object", repr_data->elem_kind);
     }
 
     return retval;
@@ -314,8 +307,7 @@ static MVMObject * at_pos_boxed(MVMThreadContext *tc, MVMSTable *st, void *data,
         case MVM_CARRAY_ELEM_KIND_CSTRUCT:
             break;
         default:
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                "at_pos_boxed on CArray REPR not usable with this element type");
+            MVM_exception_throw_adhoc(tc, "at_pos_boxed on CArray REPR not usable with this element type");
     }
 
     if (body->managed && index >= body->elems)
@@ -382,13 +374,11 @@ static void bind_pos_native(MVMThreadContext *tc, MVMSTable *st, void *data, INT
                 type_st->REPR->box_funcs->set_str(tc, type_st, ptr, value->value.stringval);
                 break;
             default:
-                Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                    "Bad value of NativeValue.type: %d", value->type);
+                MVM_exception_throw_adhoc(tc, "Bad value of NativeValue.type: %d", value->type);
             }
             break;
         default:
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                "bind_pos_native on CArray REPR only usable with numeric element types");
+            MVM_exception_throw_adhoc(tc, "bind_pos_native on CArray REPR only usable with numeric element types");
     }
 }
 static void bind_pos_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, INTVAL index, MVMObject *obj) {
@@ -411,15 +401,14 @@ static void bind_pos_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, INTV
         case MVM_CARRAY_ELEM_KIND_CPOINTER:
             break;
         default:
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                "bind_pos_boxed on CArray REPR not usable with this element type");
+            MVM_exception_throw_adhoc(tc, "bind_pos_boxed on CArray REPR not usable with this element type");
     }
 
     if (IS_CONCRETE(obj)) {
         switch (repr_data->elem_kind) {
             case MVM_CARRAY_ELEM_KIND_STRING:
             {
-                STRING *str  = REPR(obj)->box_funcs->get_str(tc, STABLE(obj), OBJECT_BODY(obj));
+                MVMString *str  = REPR(obj)->box_funcs->get_str(tc, STABLE(obj), OBJECT_BODY(obj));
                 cptr = Parrot_str_to_encoded_cstring(tc, str, Parrot_utf8_encoding_ptr);
                 break;
             }
@@ -430,11 +419,10 @@ static void bind_pos_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, INTV
                 cptr = ((CStructBody *) OBJECT_BODY(obj))->cstruct;
                 break;
             case MVM_CARRAY_ELEM_KIND_CPOINTER:
-                cptr = ((CPointerBody *) OBJECT_BODY(obj))->ptr;
+                cptr = ((MVMCPointerBody *) OBJECT_BODY(obj))->ptr;
                 break;
             default:
-                Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                    "Fatal error: unknown CArray elem_kind (%d) in bind_pos_boxed", repr_data->elem_kind);
+                MVM_exception_throw_adhoc(tc, "Fatal error: unknown CArray elem_kind (%d) in bind_pos_boxed", repr_data->elem_kind);
         }
     }
     else {
@@ -460,16 +448,15 @@ static void unshift_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, MVMOb
 static MVMObject * shift_boxed(MVMThreadContext *tc, MVMSTable *st, void *data) {
     die_pos_nyi(tc);
 }
-static INTVAL elems(MVMThreadContext *tc, MVMSTable *st, void *data) {
+static MVMuint64 elems(MVMThreadContext *tc, MVMSTable *st, void *data) {
     MVMCArrayBody     *body      = (MVMCArrayBody *)data;
     if (body->managed)
         return body->elems;
-    Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-        "Don't know how many elements a C array returned from a library has");
+    MVM_exception_throw_adhoc(tc, "Don't know how many elements a C array returned from a library has");
 }
 
 /* Serializes the REPR data. */
-static void serialize_repr_data(MVMThreadContext *tc, MVMSTable *st, SerializationWriter *writer) {
+static void serialize_repr_data(MVMThreadContext *tc, MVMSTable *st, MVMSerializationWriter *writer) {
     MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *)st->REPR_data;
     writer->write_int(tc, writer, repr_data->elem_size);
     writer->write_ref(tc, writer, repr_data->elem_type);
@@ -477,7 +464,7 @@ static void serialize_repr_data(MVMThreadContext *tc, MVMSTable *st, Serializati
 }
 
 /* Deserializes the REPR data. */
-static void deserialize_repr_data(MVMThreadContext *tc, MVMSTable *st, SerializationReader *reader) {
+static void deserialize_repr_data(MVMThreadContext *tc, MVMSTable *st, MVMSerializationReader *reader) {
     MVMCArrayREPRData *repr_data = (MVMCArrayREPRData *) mem_sys_allocate_zeroed(sizeof(MVMCArrayREPRData));
     st->REPR_data = (MVMCArrayREPRData *) repr_data;
     repr_data->elem_size = reader->read_int(tc, reader);

@@ -4,6 +4,12 @@
 #include "CArray.h"
 #include "CPointer.h"
 
+#define ALIGNOF(type) \
+    ((MVMuint16)offsetof(struct { char dummy; type member; }, member))
+
+typedef MVMObject * (* wrap_object_t) (MVMThreadContext *tc, void *obj);
+typedef MVMObject * (* create_stable_t) (MVMThreadContext *tc, MVMREPROps *REPR, MVMObject *HOW);
+
 /* This representation's function pointer table. */
 static MVMREPROps *this_repr;
 
@@ -17,13 +23,13 @@ static create_stable_t create_stable_func;
 #define CLASS_KEY(c) ((INTVAL)MVMObject_data(STABLE_PMC(c)))
 
 /* Helper to make an introspection call, possibly with :local. */
-static MVMObject * introspection_call(MVMThreadContext *tc, MVMObject *WHAT, MVMObject *HOW, STRING *name, INTVAL local) {
+static MVMObject * introspection_call(MVMThreadContext *tc, MVMObject *WHAT, MVMObject *HOW, MVMString *name, INTVAL local) {
     MVMObject *old_ctx, *cappy;
     
     /* Look up method; if there is none hand back a null. */
-    MVMObject *meth = VTABLE_find_method(tc, HOW, name);
-    if (MVMObject_IS_NULL(meth))
-        return meth;
+    MVMObject *meth = MVM_6model_find_method(tc, HOW, name);
+    if (!meth)
+        return NULL;
 
     /* Set up call capture. */
     old_ctx = Parrot_pcc_get_signature(tc, CURRENT_CONTEXT(tc));
@@ -46,15 +52,15 @@ static MVMObject * introspection_call(MVMThreadContext *tc, MVMObject *WHAT, MVM
  * list of attributes (populating the passed flat_list). Also builds
  * the index mapping for doing named lookups. Note index is not related
  * to the storage position. */
-static MVMObject * index_mapping_and_flat_list(MVMThreadContext *tc, MVMObject *mro, CStructREPRData *repr_data) {
+static MVMObject * index_mapping_and_flat_list(MVMThreadContext *tc, MVMObject *mro, MVMCStructREPRData *repr_data) {
     MVMObject    *flat_list      = Parrot_pmc_new(tc, enum_class_ResizablePMCArray);
     MVMObject    *class_list     = Parrot_pmc_new(tc, enum_class_ResizablePMCArray);
     MVMObject    *attr_map_list  = Parrot_pmc_new(tc, enum_class_ResizablePMCArray);
-    STRING *name_str       = Parrot_str_new_constant(tc, "name");
+    MVMString *name_str       = Parrot_str_new_constant(tc, "name");
     INTVAL  current_slot   = 0;
     
     INTVAL num_classes, i;
-    CStructNameMap * result = NULL;
+    MVMCStructNameMap * result = NULL;
     
     /* Walk through the parents list. */
     INTVAL mro_idx = VTABLE_elements(tc, mro);
@@ -70,7 +76,7 @@ static MVMObject * index_mapping_and_flat_list(MVMThreadContext *tc, MVMObject *
         if (num_parents <= 1) {
             /* Get attributes and iterate over them. */
             MVMObject *attributes = VTABLE_get_pmc_keyed_int(tc, type_info, 1);
-            MVMObject *attr_map   = MVMObjectNULL;
+            MVMObject *attr_map   = NULL;
             MVMObject *attr_iter  = VTABLE_get_iter(tc, attributes);
             while (VTABLE_get_bool(tc, attr_iter)) {
                 /* Get attribute. */
@@ -78,7 +84,7 @@ static MVMObject * index_mapping_and_flat_list(MVMThreadContext *tc, MVMObject *
 
                 /* Get its name. */
                 MVMObject    *name_pmc = VTABLE_get_pmc_keyed_str(tc, attr, name_str);
-                STRING *name     = VTABLE_get_string(tc, name_pmc);
+                MVMString *name     = VTABLE_get_string(tc, name_pmc);
 
                 /* Allocate a slot. */
                 if (MVMObject_IS_NULL(attr_map))
@@ -96,14 +102,13 @@ static MVMObject * index_mapping_and_flat_list(MVMThreadContext *tc, MVMObject *
             VTABLE_push_pmc(tc, attr_map_list, attr_map);
         }
         else {
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                "CStruct representation does not support multiple inheritance");
+            MVM_exception_throw_adhoc(tc, "MVMCStruct representation does not support multiple inheritance");
         }
     }
 
     /* We can now form the name map. */
     num_classes = VTABLE_elements(tc, class_list);
-    result = (CStructNameMap *) mem_sys_allocate_zeroed(sizeof(CStructNameMap) * (1 + num_classes));
+    result = calloc(1 + num_classes, sizeof(MVMCStructNameMap));
     for (i = 0; i < num_classes; i++) {
         result[i].class_key = VTABLE_get_pmc_keyed_int(tc, class_list, i);
         result[i].name_map  = VTABLE_get_pmc_keyed_int(tc, attr_map_list, i);
@@ -116,8 +121,8 @@ static MVMObject * index_mapping_and_flat_list(MVMThreadContext *tc, MVMObject *
 /* This works out an allocation strategy for the object. It takes care of
  * "inlining" storage of attributes that are natively typed, as well as
  * noting unbox targets. */
-static void compute_allocation_strategy(MVMThreadContext *tc, MVMObject *repr_info, CStructREPRData *repr_data) {
-    STRING *type_str = Parrot_str_new_constant(tc, "type");
+static void compute_allocation_strategy(MVMThreadContext *tc, MVMObject *repr_info, MVMCStructREPRData *repr_data) {
+    MVMString *type_str = Parrot_str_new_constant(tc, "type");
     MVMObject    *flat_list;
 
     /*
@@ -154,22 +159,22 @@ static void compute_allocation_strategy(MVMThreadContext *tc, MVMObject *repr_in
 
         /* Allocate location/offset arrays and GC mark info arrays. */
         repr_data->num_attributes      = num_attrs;
-        repr_data->attribute_locations = (INTVAL *) mem_sys_allocate(info_alloc * sizeof(INTVAL));
-        repr_data->struct_offsets      = (INTVAL *) mem_sys_allocate(info_alloc * sizeof(INTVAL));
-        repr_data->flattened_stables   = (MVMSTable **) mem_sys_allocate_zeroed(info_alloc * sizeof(MVMObject *));
-        repr_data->member_types        = (MVMObject** )    mem_sys_allocate_zeroed(info_alloc * sizeof(MVMObject *));
+        repr_data->attribute_locations = malloc(info_alloc * sizeof *repr_data->attribute_locations);
+        repr_data->struct_offsets      = malloc(info_alloc * sizeof *repr_data->struct_offsets);
+        repr_data->flattened_stables   = calloc(info_alloc, sizeof *repr_data->flattened_stables);
+        repr_data->member_types        = calloc(info_alloc, sizeof *repr_data->member_types);
 
         /* Go over the attributes and arrange their allocation. */
         for (i = 0; i < num_attrs; i++) {
             /* Fetch its type; see if it's some kind of unboxed type. */
             MVMObject    *attr         = VTABLE_get_pmc_keyed_int(tc, flat_list, i);
             MVMObject    *type         = VTABLE_get_pmc_keyed_str(tc, attr, type_str);
-            INTVAL  type_id      = REPR(type)->ID;
-            INTVAL  bits         = sizeof(void *) * 8;
-            INTVAL  align        = ALIGNOF1(void *);
+            MVMuint16  type_id      = REPR(type)->ID;
+            MVMuint16  bits         = sizeof(void *) * 8;
+            MVMuint16  align        = ALIGNOF(void *);
             if (!MVMObject_IS_NULL(type)) {
                 /* See if it's a type that we know how to handle in a C struct. */
-                storage_spec spec = REPR(type)->get_storage_spec(tc, STABLE(type));
+                MVMStorageSpec spec = REPR(type)->get_storage_spec(tc, STABLE(type));
                 if (spec.inlineable == STORAGE_SPEC_INLINED &&
                         (spec.boxed_primitive == STORAGE_SPEC_BP_INT ||
                          spec.boxed_primitive == STORAGE_SPEC_BP_NUM)) {
@@ -182,15 +187,14 @@ static void compute_allocation_strategy(MVMThreadContext *tc, MVMObject *repr_in
                     align = spec.align;
 
                     if (bits % 8) {
-                        Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                                "CStruct only supports native types that are a multiple of 8 bits wide (was passed: %ld)", bits);
+                        MVM_exception_throw_adhoc(tc, "MVMCStruct only supports native types that are a multiple of 8 bits wide (was passed: %ld)", bits);
                     }
 
-                    repr_data->attribute_locations[i] = (bits << CSTRUCT_ATTR_SHIFT) | CSTRUCT_ATTR_IN_STRUCT;
+                    repr_data->attribute_locations[i] = (bits << MVM_CSTRUCT_ATTR_SHIFT) | MVM_CSTRUCT_ATTR_IN_STRUCT;
                     repr_data->flattened_stables[i] = STABLE(type);
                     if (REPR(type)->initialize) {
                         if (!repr_data->initialize_slots)
-                            repr_data->initialize_slots = (INTVAL *) mem_sys_allocate_zeroed((info_alloc + 1) * sizeof(INTVAL));
+                            repr_data->initialize_slots = calloc(info_alloc + 1, sizeof *repr_data->initialize_slots);
                         repr_data->initialize_slots[cur_init_slot] = i;
                         cur_init_slot++;
                     }
@@ -198,35 +202,33 @@ static void compute_allocation_strategy(MVMThreadContext *tc, MVMObject *repr_in
                 else if(spec.can_box & STORAGE_SPEC_CAN_BOX_STR) {
                     /* It's a string of some kind.  */
                     repr_data->num_child_objs++;
-                    repr_data->attribute_locations[i] = (cur_obj_attr++ << CSTRUCT_ATTR_SHIFT) | CSTRUCT_ATTR_STRING;
+                    repr_data->attribute_locations[i] = (cur_obj_attr++ << MVM_CSTRUCT_ATTR_SHIFT) | MVM_CSTRUCT_ATTR_STRING;
                     repr_data->member_types[i] = type;
                 }
                 else if(type_id == get_ca_repr_id()) {
                     /* It's a CArray of some kind.  */
                     repr_data->num_child_objs++;
-                    repr_data->attribute_locations[i] = (cur_obj_attr++ << CSTRUCT_ATTR_SHIFT) | CSTRUCT_ATTR_CARRAY;
+                    repr_data->attribute_locations[i] = (cur_obj_attr++ << MVM_CSTRUCT_ATTR_SHIFT) | MVM_CSTRUCT_ATTR_CARRAY;
                     repr_data->member_types[i] = type;
                 }
                 else if(type_id == get_cs_repr_id()) {
-                    /* It's a CStruct. */
+                    /* It's a MVMCStruct. */
                     repr_data->num_child_objs++;
-                    repr_data->attribute_locations[i] = (cur_obj_attr++ << CSTRUCT_ATTR_SHIFT) | CSTRUCT_ATTR_CSTRUCT;
+                    repr_data->attribute_locations[i] = (cur_obj_attr++ << MVM_CSTRUCT_ATTR_SHIFT) | MVM_CSTRUCT_ATTR_CSTRUCT;
                     repr_data->member_types[i] = type;
                 }
                 else if(type_id == get_cp_repr_id()) {
                     /* It's a CPointer. */
                     repr_data->num_child_objs++;
-                    repr_data->attribute_locations[i] = (cur_obj_attr++ << CSTRUCT_ATTR_SHIFT) | CSTRUCT_ATTR_CPTR;
+                    repr_data->attribute_locations[i] = (cur_obj_attr++ << MVM_CSTRUCT_ATTR_SHIFT) | MVM_CSTRUCT_ATTR_CPTR;
                     repr_data->member_types[i] = type;
                 }
                 else {
-                    Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                        "CStruct representation only implements native int and float members so far");
+                    MVM_exception_throw_adhoc(tc, "MVMCStruct representation only implements native int and float members so far");
                 }
             }
             else {
-                Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                    "CStruct representation requires the types of all attributes to be specified");
+                MVM_exception_throw_adhoc(tc, "MVMCStruct representation requires the types of all attributes to be specified");
             }
             
             /* Do allocation. */
@@ -288,10 +290,10 @@ static void set_ptr_at_offset(void *data, INTVAL offset, void *value) {
 }
 
 /* Helper for finding a slot number. */
-static INTVAL try_get_slot(MVMThreadContext *tc, CStructREPRData *repr_data, MVMObject *class_key, STRING *name) {
+static INTVAL try_get_slot(MVMThreadContext *tc, MVMCStructREPRData *repr_data, MVMObject *class_key, MVMString *name) {
     INTVAL slot = -1;
     if (repr_data->name_to_index_mapping) {
-        CStructNameMap *cur_map_entry = repr_data->name_to_index_mapping;
+        MVMCStructNameMap *cur_map_entry = repr_data->name_to_index_mapping;
         while (cur_map_entry->class_key != NULL) {
             if (cur_map_entry->class_key == class_key) {
                 MVMObject *slot_pmc = VTABLE_get_pmc_keyed_str(tc, cur_map_entry->name_map, name);
@@ -309,14 +311,14 @@ static INTVAL try_get_slot(MVMThreadContext *tc, CStructREPRData *repr_data, MVM
  * the given HOW. */
 static MVMObject * type_object_for(MVMThreadContext *tc, MVMObject *HOW) {
     /* Create new object instance. */
-    CStructInstance *obj = mem_allocate_zeroed_typed(CStructInstance);
+    MVMCStruct *obj = calloc(1, sizeof(MVMCStruct));
 
     /* Build an MVMSTable. */
     MVMObject *st_pmc = create_stable_func(tc, this_repr, HOW);
     MVMSTable *st  = STABLE_STRUCT(st_pmc);
     
     /* Create REPR data structure and hang it off the MVMSTable. */
-    st->REPR_data = mem_allocate_zeroed_typed(CStructREPRData);
+    st->REPR_data = calloc(1, sizeof(MVMCStructREPRData));
 
     /* Create type object and point it back at the MVMSTable. */
     obj->common.stable = st_pmc;
@@ -332,7 +334,7 @@ static MVMObject * type_object_for(MVMThreadContext *tc, MVMObject *HOW) {
 /* Composes the representation. */
 static void compose(MVMThreadContext *tc, MVMSTable *st, MVMObject *repr_info) {
     /* Compute allocation strategy. */
-    CStructREPRData *repr_data = (CStructREPRData *) st->REPR_data;
+    MVMCStructREPRData *repr_data = (MVMCStructREPRData *) st->REPR_data;
     MVMObject *attr_info = VTABLE_get_pmc_keyed_str(tc, repr_info,
             Parrot_str_new_constant(tc, "attribute"));
     compute_allocation_strategy(tc, attr_info, repr_data);
@@ -341,11 +343,11 @@ static void compose(MVMThreadContext *tc, MVMSTable *st, MVMObject *repr_info) {
 
 /* Creates a new instance based on the type object. */
 static MVMObject * allocate(MVMThreadContext *tc, MVMSTable *st) {
-    CStructInstance * obj;
-    CStructREPRData * repr_data = (CStructREPRData *) st->REPR_data;
+    MVMCStruct * obj;
+    MVMCStructREPRData * repr_data = (MVMCStructREPRData *) st->REPR_data;
 
     /* Allocate and set up object instance. */
-    obj = (CStructInstance *) Parrot_gc_allocate_fixed_size_storage(tc, sizeof(CStructInstance));
+    obj = (MVMCStruct *) Parrot_gc_allocate_fixed_size_storage(tc, sizeof(MVMCStruct));
     obj->common.stable = st->stable_pmc;
     obj->common.sc = NULL;
     obj->body.child_objs = NULL;
@@ -353,7 +355,7 @@ static MVMObject * allocate(MVMThreadContext *tc, MVMSTable *st) {
     /* Allocate child obj array. */
     if(repr_data->num_child_objs > 0) {
         size_t bytes = repr_data->num_child_objs*sizeof(MVMObject *);
-        obj->body.child_objs = (MVMObject **) mem_sys_allocate_zeroed(bytes);
+        obj->body.child_objs = calloc(1, bytes);
         memset(obj->body.child_objs, 0, bytes);
     }
 
@@ -362,11 +364,11 @@ static MVMObject * allocate(MVMThreadContext *tc, MVMSTable *st) {
 
 /* Initialize a new instance. */
 static void initialize(MVMThreadContext *tc, MVMSTable *st, void *data) {
-    CStructREPRData * repr_data = (CStructREPRData *) st->REPR_data;
+    MVMCStructREPRData * repr_data = (MVMCStructREPRData *) st->REPR_data;
     
     /* Allocate object body. */
-    CStructBody *body = (CStructBody *)data;
-    body->cstruct = mem_sys_allocate(repr_data->struct_size > 0 ? repr_data->struct_size : 1);
+    MVMCStructBody *body = (MVMCStructBody *)data;
+    body->cstruct = malloc(repr_data->struct_size > 0 ? repr_data->struct_size : 1);
     memset(body->cstruct, 0, repr_data->struct_size);
     
     /* Initialize the slots. */
@@ -382,18 +384,17 @@ static void initialize(MVMThreadContext *tc, MVMSTable *st, void *data) {
 
 /* Copies to the body of one object to another. */
 static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, void *dest) {
-    CStructREPRData * repr_data = (CStructREPRData *) st->REPR_data;
-    CStructBody *src_body = (CStructBody *)src;
-    CStructBody *dest_body = (CStructBody *)dest;
+    MVMCStructREPRData * repr_data = (MVMCStructREPRData *) st->REPR_data;
+    MVMCStructBody *src_body = (MVMCStructBody *)src;
+    MVMCStructBody *dest_body = (MVMCStructBody *)dest;
     /* XXX todo */
     /* XXX also need to shallow copy the obj array */
 }
 
 /* Helper for complaining about attribute access errors. */
 PARROT_DOES_NOT_RETURN
-static void no_such_attribute(MVMThreadContext *tc, const char *action, MVMObject *class_handle, STRING *name) {
-    Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-            "Can not %s non-existent attribute '%Ss' on class '%Ss'",
+static void no_such_attribute(MVMThreadContext *tc, const char *action, MVMObject *class_handle, MVMString *name) {
+    MVM_exception_throw_adhoc(tc, "Can not %s non-existent attribute '%Ss' on class '%Ss'",
             action, name, VTABLE_get_string(tc, introspection_call(tc,
                 class_handle, STABLE(class_handle)->HOW,
                 Parrot_str_new_constant(tc, "name"), 0)));
@@ -402,26 +403,24 @@ static void no_such_attribute(MVMThreadContext *tc, const char *action, MVMObjec
 /* Helper to die because this type doesn't support attributes. */
 PARROT_DOES_NOT_RETURN
 static void die_no_attrs(MVMThreadContext *tc) {
-    Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-            "CStruct representation attribute not yet fully implemented");
+    MVM_exception_throw_adhoc(tc, "MVMCStruct representation attribute not yet fully implemented");
 }
 
 /* Gets the current value for an attribute. */
-static MVMObject * get_attribute_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, MVMObject *class_handle, STRING *name, INTVAL hint) {
-    CStructREPRData *repr_data = (CStructREPRData *)st->REPR_data;
-    CStructBody     *body      = (CStructBody *)data;
+static MVMObject * get_attribute_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, MVMObject *class_handle, MVMString *name, INTVAL hint) {
+    MVMCStructREPRData *repr_data = (MVMCStructREPRData *)st->REPR_data;
+    MVMCStructBody     *body      = (MVMCStructBody *)data;
     INTVAL           slot;
 
     /* Look up slot, then offset and compute address. */
     slot = hint >= 0 ? hint :
         try_get_slot(tc, repr_data, class_handle, name);
     if (slot >= 0) {
-        INTVAL type      = repr_data->attribute_locations[slot] & CSTRUCT_ATTR_MASK;
-        INTVAL real_slot = repr_data->attribute_locations[slot] >> CSTRUCT_ATTR_SHIFT;
+        INTVAL type      = repr_data->attribute_locations[slot] & MVM_CSTRUCT_ATTR_MASK;
+        INTVAL real_slot = repr_data->attribute_locations[slot] >> MVM_CSTRUCT_ATTR_SHIFT;
 
-        if(type == CSTRUCT_ATTR_IN_STRUCT)
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                    "CStruct Can't perform boxed get on flattened attributes yet");
+        if(type == MVM_CSTRUCT_ATTR_IN_STRUCT)
+            MVM_exception_throw_adhoc(tc, "MVMCStruct Can't perform boxed get on flattened attributes yet");
         else {
             MVMObject *obj = body->child_objs[real_slot];
             MVMObject *typeobj = repr_data->member_types[slot];
@@ -429,18 +428,18 @@ static MVMObject * get_attribute_boxed(MVMThreadContext *tc, MVMSTable *st, void
             if(!obj) {
                 void *cobj = get_ptr_at_offset(body->cstruct, repr_data->struct_offsets[slot]);
                 if(cobj) {
-                    if(type == CSTRUCT_ATTR_CARRAY) {
+                    if(type == MVM_CSTRUCT_ATTR_CARRAY) {
                         obj = make_carray_result(tc, typeobj, cobj);
                     }
-                    else if(type == CSTRUCT_ATTR_CSTRUCT) {
+                    else if(type == MVM_CSTRUCT_ATTR_CSTRUCT) {
                         obj = make_cstruct_result(tc, typeobj, cobj);
                     }
-                    else if(type == CSTRUCT_ATTR_CPTR) {
+                    else if(type == MVM_CSTRUCT_ATTR_CPTR) {
                         obj = make_cpointer_result(tc, typeobj, cobj);
                     }
-                    else if(type == CSTRUCT_ATTR_STRING) {
+                    else if(type == MVM_CSTRUCT_ATTR_STRING) {
                         char *cstr = (char *) cobj;
-                        STRING *str  = Parrot_str_new_init(tc, cstr, strlen(cstr), Parrot_utf8_encoding_ptr, 0);
+                        MVMString *str  = Parrot_str_new_init(tc, cstr, strlen(cstr), Parrot_utf8_encoding_ptr, 0);
 
                         obj  = REPR(typeobj)->allocate(tc, STABLE(typeobj));
                         REPR(obj)->initialize(tc, STABLE(obj), OBJECT_BODY(obj));
@@ -461,9 +460,9 @@ static MVMObject * get_attribute_boxed(MVMThreadContext *tc, MVMSTable *st, void
     /* Otherwise, complain that the attribute doesn't exist. */
     no_such_attribute(tc, "get", class_handle, name);
 }
-static void get_attribute_native(MVMThreadContext *tc, MVMSTable *st, void *data, MVMObject *class_handle, STRING *name, INTVAL hint, NativeValue *value) {
-    CStructREPRData *repr_data = (CStructREPRData *)st->REPR_data;
-    CStructBody     *body      = (CStructBody *)data;
+static void get_attribute_native(MVMThreadContext *tc, MVMSTable *st, void *data, MVMObject *class_handle, MVMString *name, INTVAL hint, NativeValue *value) {
+    MVMCStructREPRData *repr_data = (MVMCStructREPRData *)st->REPR_data;
+    MVMCStructBody     *body      = (MVMCStructBody *)data;
     INTVAL           slot;
 
     /* Look up slot, then offset and compute address. */
@@ -484,14 +483,12 @@ static void get_attribute_native(MVMThreadContext *tc, MVMSTable *st, void *data
                 value->value.stringval = st->REPR->box_funcs->get_str(tc, st, ptr);
                 break;
             default:
-                Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                    "Bad value of NativeValue.type: %d", value->type);
+                MVM_exception_throw_adhoc(tc, "Bad value of NativeValue.type: %d", value->type);
             }
             return;
         }
         else {
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                "Cannot read by reference from non-flattened attribute '%Ss' on class '%Ss'",
+            MVM_exception_throw_adhoc(tc, "Cannot read by reference from non-flattened attribute '%Ss' on class '%Ss'",
                 name, VTABLE_get_string(tc, introspection_call(tc,
                     class_handle, STABLE(class_handle)->HOW,
                     Parrot_str_new_constant(tc, "name"), 0)));
@@ -503,10 +500,10 @@ static void get_attribute_native(MVMThreadContext *tc, MVMSTable *st, void *data
 }
 
 /* Binds the given value to the specified attribute. */
-static void bind_attribute_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, MVMObject *class_handle, STRING *name, INTVAL hint, MVMObject *value) {
-    CStructREPRData *repr_data = (CStructREPRData *)st->REPR_data;
-    CStructBody     *body      = (CStructBody *)data;
-    STRING          *type_str  = Parrot_str_new_constant(tc, "type");
+static void bind_attribute_boxed(MVMThreadContext *tc, MVMSTable *st, void *data, MVMObject *class_handle, MVMString *name, INTVAL hint, MVMObject *value) {
+    MVMCStructREPRData *repr_data = (MVMCStructREPRData *)st->REPR_data;
+    MVMCStructBody     *body      = (MVMCStructBody *)data;
+    MVMString          *type_str  = Parrot_str_new_constant(tc, "type");
     INTVAL            slot;
 
     value = decontainerize(tc, value);
@@ -517,11 +514,10 @@ static void bind_attribute_boxed(MVMThreadContext *tc, MVMSTable *st, void *data
     if (slot >= 0) {
         MVMSTable *st = repr_data->flattened_stables[slot];
         if (st)
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                    "CStruct Can't perform boxed bind on flattened attributes yet");
+            MVM_exception_throw_adhoc(tc, "MVMCStruct Can't perform boxed bind on flattened attributes yet");
         else {
-            INTVAL type = repr_data->attribute_locations[slot] & CSTRUCT_ATTR_MASK;
-            INTVAL real_slot = repr_data->attribute_locations[slot] >> CSTRUCT_ATTR_SHIFT;
+            INTVAL type = repr_data->attribute_locations[slot] & MVM_CSTRUCT_ATTR_MASK;
+            INTVAL real_slot = repr_data->attribute_locations[slot] >> MVM_CSTRUCT_ATTR_SHIFT;
 
             if(IS_CONCRETE(value)) {
                 void *cobj       = NULL;
@@ -529,17 +525,17 @@ static void bind_attribute_boxed(MVMThreadContext *tc, MVMSTable *st, void *data
                 body->child_objs[real_slot] = value;
 
                 /* Set cobj to correct pointer based on type of value. */
-                if(type == CSTRUCT_ATTR_CARRAY) {
+                if(type == MVM_CSTRUCT_ATTR_CARRAY) {
                     cobj = ((CArrayBody *) OBJECT_BODY(value))->storage;
                 }
-                else if(type == CSTRUCT_ATTR_CSTRUCT) {
-                    cobj = ((CStructBody *) OBJECT_BODY(value))->cstruct;
+                else if(type == MVM_CSTRUCT_ATTR_CSTRUCT) {
+                    cobj = ((MVMCStructBody *) OBJECT_BODY(value))->cstruct;
                 }
-                else if(type == CSTRUCT_ATTR_CPTR) {
+                else if(type == MVM_CSTRUCT_ATTR_CPTR) {
                     cobj = ((CPointerBody *) OBJECT_BODY(value))->ptr;
                 }
-                else if(type == CSTRUCT_ATTR_STRING) {
-                    STRING *str  = REPR(value)->box_funcs->get_str(tc, STABLE(value), OBJECT_BODY(value));
+                else if(type == MVM_CSTRUCT_ATTR_STRING) {
+                    MVMString *str  = REPR(value)->box_funcs->get_str(tc, STABLE(value), OBJECT_BODY(value));
                     cobj = Parrot_str_to_encoded_cstring(tc, str, Parrot_utf8_encoding_ptr);
                 }
 
@@ -556,9 +552,9 @@ static void bind_attribute_boxed(MVMThreadContext *tc, MVMSTable *st, void *data
         no_such_attribute(tc, "bind", class_handle, name);
     }
 }
-static void bind_attribute_native(MVMThreadContext *tc, MVMSTable *st, void *data, MVMObject *class_handle, STRING *name, INTVAL hint, NativeValue *value) {
-    CStructREPRData *repr_data = (CStructREPRData *)st->REPR_data;
-    CStructBody     *body      = (CStructBody *)data;
+static void bind_attribute_native(MVMThreadContext *tc, MVMSTable *st, void *data, MVMObject *class_handle, MVMString *name, INTVAL hint, NativeValue *value) {
+    MVMCStructREPRData *repr_data = (MVMCStructREPRData *)st->REPR_data;
+    MVMCStructBody     *body      = (MVMCStructBody *)data;
     INTVAL            slot;
 
     /* Try to find the slot. */
@@ -579,14 +575,12 @@ static void bind_attribute_native(MVMThreadContext *tc, MVMSTable *st, void *dat
                 st->REPR->box_funcs->set_str(tc, st, ptr, value->value.stringval);
                 break;
             default:
-                Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                    "Bad value of NativeValue.type: %d", value->type);
+                MVM_exception_throw_adhoc(tc, "Bad value of NativeValue.type: %d", value->type);
             }
             return;
         }
         else
-            Parrot_ex_throw_from_c_args(tc, NULL, EXCEPTION_INVALID_OPERATION,
-                "Can not bind by reference to non-flattened attribute '%Ss' on class '%Ss'",
+            MVM_exception_throw_adhoc(tc, "Can not bind by reference to non-flattened attribute '%Ss' on class '%Ss'",
                 name, VTABLE_get_string(tc, introspection_call(tc,
                     class_handle, STABLE(class_handle)->HOW,
                     Parrot_str_new_constant(tc, "name"), 0)));
@@ -598,27 +592,27 @@ static void bind_attribute_native(MVMThreadContext *tc, MVMSTable *st, void *dat
 }
 
 /* Checks if an attribute has been initialized. */
-static INTVAL is_attribute_initialized(MVMThreadContext *tc, MVMSTable *st, void *data, MVMObject *ClassHandle, STRING *Name, INTVAL Hint) {
+static INTVAL is_attribute_initialized(MVMThreadContext *tc, MVMSTable *st, void *data, MVMObject *ClassHandle, MVMString *Name, INTVAL Hint) {
     die_no_attrs(tc);
 }
 
 /* Gets the hint for the given attribute ID. */
-static INTVAL hint_for(MVMThreadContext *tc, MVMSTable *st, MVMObject *class_handle, STRING *name) {
+static INTVAL hint_for(MVMThreadContext *tc, MVMSTable *st, MVMObject *class_handle, MVMString *name) {
     return NO_HINT;
 }
 
 /* This Parrot-specific addition to the API is used to mark an object. */
 static void gc_mark(MVMThreadContext *tc, MVMSTable *st, void *data) {
-    CStructREPRData *repr_data = (CStructREPRData *) st->REPR_data;
-    CStructBody *body = (CStructBody *)data;
+    MVMCStructREPRData *repr_data = (MVMCStructREPRData *) st->REPR_data;
+    MVMCStructBody *body = (MVMCStructBody *)data;
     INTVAL i;
     for (i = 0; i < repr_data->num_child_objs; i++)
         Parrot_gc_mark_PMC_alive(tc, body->child_objs[i]);
 }
 
 static void gc_mark_repr_data(MVMThreadContext *tc, MVMSTable *st) {
-    CStructREPRData *repr_data = (CStructREPRData *) st->REPR_data;
-    CStructNameMap *map = repr_data->name_to_index_mapping;
+    MVMCStructREPRData *repr_data = (MVMCStructREPRData *) st->REPR_data;
+    MVMCStructNameMap *map = repr_data->name_to_index_mapping;
     INTVAL i;
 
     if (!map) return;
@@ -632,7 +626,7 @@ static void gc_mark_repr_data(MVMThreadContext *tc, MVMSTable *st) {
 /* This is called to do any cleanup of resources when an object gets
  * embedded inside another one. Never called on a top-level object. */
 static void gc_cleanup(MVMThreadContext *tc, MVMSTable *st, void *data) {
-    CStructBody *body = (CStructBody *)data;
+    MVMCStructBody *body = (MVMCStructBody *)data;
     if (body->child_objs)
         mem_sys_free(body->child_objs);
     if (body->cstruct)
@@ -641,10 +635,10 @@ static void gc_cleanup(MVMThreadContext *tc, MVMSTable *st, void *data) {
 
 /* This Parrot-specific addition to the API is used to free an object. */
 static void gc_free(MVMThreadContext *tc, MVMObject *obj) {
-    CStructREPRData *repr_data = (CStructREPRData *)STABLE(obj)->REPR_data;
+    MVMCStructREPRData *repr_data = (MVMCStructREPRData *)STABLE(obj)->REPR_data;
 	gc_cleanup(tc, STABLE(obj), OBJECT_BODY(obj));
     if (IS_CONCRETE(obj))
-		Parrot_gc_free_fixed_size_storage(tc, sizeof(CStructInstance), MVMObject_data(obj));
+		Parrot_gc_free_fixed_size_storage(tc, sizeof(MVMCStruct), MVMObject_data(obj));
 	else
 		mem_sys_free(MVMObject_data(obj));
     MVMObject_data(obj) = NULL;
@@ -653,28 +647,28 @@ static void gc_free(MVMThreadContext *tc, MVMObject *obj) {
 /* Gets the storage specification for this representation. */
 static storage_spec get_storage_spec(MVMThreadContext *tc, MVMSTable *st) {
     storage_spec spec;
-    spec.inlineable = STORAGE_SPEC_REFERENCE;
-    spec.boxed_primitive = STORAGE_SPEC_BP_NONE;
+    spec.inlineable = MVM_STORAGE_SPEC_REFERENCE;
+    spec.boxed_primitive = MVM_STORAGE_SPEC_BP_NONE;
     spec.can_box = 0;
     spec.bits = sizeof(void *) * 8;
-    spec.align = ALIGNOF1(void *);
+    spec.align = ALIGNOF(void *);
     return spec;
 }
 
 /* Serializes the REPR data. */
 static void serialize_repr_data(MVMThreadContext *tc, MVMSTable *st, SerializationWriter *writer) {
-    CStructREPRData *repr_data = (CStructREPRData *)st->REPR_data;
+    MVMCStructREPRData *repr_data = (MVMCStructREPRData *)st->REPR_data;
     /* Could do this, but can also re-compute it each time for now. */
 }
 
 /* Deserializes the REPR data. */
 static void deserialize_repr_data(MVMThreadContext *tc, MVMSTable *st, SerializationReader *reader) {
     /* Just allocating it will do for now. */
-    st->REPR_data = mem_sys_allocate_zeroed(sizeof(CStructREPRData));
+    st->REPR_data = calloc(1, sizeof(MVMCStructREPRData));
 }
 
-/* Initializes the CStruct representation. */
-MVMREPROps * CStruct_initialize(MVMThreadContext *tc,
+/* Initializes the MVMCStruct representation. */
+MVMREPROps * MVMCStruct_initialize(MVMThreadContext *tc,
         wrap_object_t wrap_object_func_ptr,
         create_stable_t create_stable_func_ptr) {
     /* Stash away functions passed wrapping functions. */
@@ -682,13 +676,13 @@ MVMREPROps * CStruct_initialize(MVMThreadContext *tc,
     create_stable_func = create_stable_func_ptr;
 
     /* Allocate and populate the representation function table. */
-    this_repr = mem_allocate_zeroed_typed(MVMREPROps);
+    this_repr = calloc(1, sizeof(MVMREPROps));
     this_repr->type_object_for = type_object_for;
     this_repr->compose = compose;
     this_repr->allocate = allocate;
     this_repr->initialize = initialize;
     this_repr->copy_to = copy_to;
-    this_repr->attr_funcs = mem_allocate_typed(MVMREPROps_Attribute);
+    this_repr->attr_funcs = malloc(sizeof(MVMREPROps_Attribute));
     this_repr->attr_funcs->get_attribute_boxed = get_attribute_boxed;
     this_repr->attr_funcs->get_attribute_native = get_attribute_native;
     this_repr->attr_funcs->bind_attribute_boxed = bind_attribute_boxed;
