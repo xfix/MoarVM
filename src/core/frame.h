@@ -1,7 +1,7 @@
 /* Lexical hash entry for ->lexical_names on a frame. */
 struct MVMLexicalHashEntry {
     /* key string */
-    struct _MVMString *key;
+    MVMString *key;
     
     /* index of the lexical entry. */
     MVMuint32 value;
@@ -32,6 +32,10 @@ struct MVMFrame {
     /* The args buffer. Actually a pointer into an area inside of *work, to
      * decrease number of allocations. */
     MVMRegister *args;
+    
+    /* Callsite that indicates how the current args buffer is being used, if
+     * it is. */
+    MVMCallsite *cur_args_callsite;
 
     /* The outer frame, thus forming the static chain. */
     MVMFrame *outer;
@@ -70,6 +74,10 @@ struct MVMFrame {
 
     /* GC run sequence number that we last saw this frame during. */
     AO_t gc_seq_number;
+
+    /* Linked MVMContext object, so we can track the
+     * serialization context and such. */
+    MVMObject *context_object;
 };
 
 /* How do we invoke this thing? Specifies either an attribute to look at for
@@ -104,7 +112,7 @@ MVMFrame * MVM_frame_create_context_only(MVMThreadContext *tc, MVMStaticFrame *s
 MVMuint64 MVM_frame_try_return(MVMThreadContext *tc);
 MVMuint64 MVM_frame_try_unwind(MVMThreadContext *tc);
 MVMFrame * MVM_frame_inc_ref(MVMThreadContext *tc, MVMFrame *frame);
-void MVM_frame_dec_ref(MVMThreadContext *tc, MVMFrame *frame);
+MVMFrame * MVM_frame_dec_ref(MVMThreadContext *tc, MVMFrame *frame);
 MVMObject * MVM_frame_takeclosure(MVMThreadContext *tc, MVMObject *code);
 MVMRegister * MVM_frame_find_lexical_by_name(MVMThreadContext *tc, MVMString *name, MVMuint16 type);
 MVMRegister * MVM_frame_find_contextual_by_name(MVMThreadContext *tc, MVMString *name, MVMuint16 *type);
@@ -113,3 +121,4 @@ void MVM_frame_binddynlex(MVMThreadContext *tc, MVMString *name, MVMObject *valu
 MVMRegister * MVM_frame_lexical(MVMThreadContext *tc, MVMFrame *f, MVMString *name);
 MVMuint16 MVM_frame_lexical_primspec(MVMThreadContext *tc, MVMFrame *f, MVMString *name);
 MVMObject * MVM_frame_find_invokee(MVMThreadContext *tc, MVMObject *code);
+MVMObject * MVM_frame_context_wrapper(MVMThreadContext *tc, MVMFrame *f);

@@ -102,10 +102,10 @@ struct MVMSerializationWriter {
 
     /* The stables, objects, code refs and contexts lists we're working
      * through/adding to. */
-    MVMObject *stables_list;
-    MVMObject *objects_list;
-    MVMObject *codes_list;
-    MVMObject *contexts_list;
+    MVMSTable **stables_list;
+    MVMObject  *objects_list;
+    MVMObject  *codes_list;
+    MVMObject  *contexts_list;
     
     /* Current position in the stables, objects and contexts lists. */
     MVMint64 stables_list_pos;
@@ -154,4 +154,4 @@ void MVM_serialization_deserialize(MVMThreadContext *tc, MVMSerializationContext
     MVMString *data);
 MVMString * MVM_sha1(MVMThreadContext *tc, MVMString *str);
 MVMString * MVM_serialization_serialize(MVMThreadContext *tc, MVMSerializationContext *sc,
-    MVMObject *obj);
+    MVMObject *empty_string_heap);

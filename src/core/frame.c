@@ -41,8 +41,8 @@ MVMFrame * MVM_frame_inc_ref(MVMThreadContext *tc, MVMFrame *frame) {
 }
 
 /* Decreases the reference count of a frame. If it hits zero, then we can
- * free it. */
-void MVM_frame_dec_ref(MVMThreadContext *tc, MVMFrame *frame) {
+ * free it. Returns null for convenience. */
+MVMFrame * MVM_frame_dec_ref(MVMThreadContext *tc, MVMFrame *frame) {
     /* MVM_atomic_dec returns what the count was before it decremented it
      * to zero, so we look for 1 here. */
     while (MVM_atomic_decr(&frame->ref_count) == 1) {
@@ -70,8 +70,9 @@ void MVM_frame_dec_ref(MVMThreadContext *tc, MVMFrame *frame) {
         if (outer_to_decr)
             frame = outer_to_decr; /* and loop */
         else
-            return;
+            break;
     }
+    return NULL;
 }
 
 /* Takes a static frame and a thread context. Invokes the static frame. */
@@ -135,10 +136,12 @@ void MVM_frame_invoke(MVMThreadContext *tc, MVMStaticFrame *static_frame,
         frame->work = NULL;
     }
 
-    /* Calculate args buffer position. */
+    /* Calculate args buffer position and make sure current call site starts
+     * empty. */
     frame->args = static_frame_body->work_size ?
         frame->work + static_frame_body->num_locals :
         NULL;
+    frame->cur_args_callsite = NULL;
 
     /* Outer. */
     if (outer) {
@@ -251,8 +254,11 @@ static MVMuint64 return_or_unwind(MVMThreadContext *tc, MVMuint8 unwind) {
         prior = returner->static_info->body.prior_invocation;
     } while (!MVM_trycas(&returner->static_info->body.prior_invocation, prior, returner));
     if (prior)
-        MVM_frame_dec_ref(tc, prior);
+        prior = MVM_frame_dec_ref(tc, prior);
 
+    /* Arguments buffer no longer in use (saves GC visiting it). */
+    returner->cur_args_callsite = NULL;
+    
     /* Clear up argument processing leftovers, if any. */
     if (returner->work) {
         MVM_args_proc_cleanup_for_cache(tc, &returner->params);
@@ -358,7 +364,7 @@ MVMRegister * MVM_frame_find_lexical_by_name(MVMThreadContext *tc, MVMString *na
 /* Looks up the address of the lexical with the specified name and the
  * specified type. Returns null if it does not exist. */
 MVMRegister * MVM_frame_find_contextual_by_name(MVMThreadContext *tc, MVMString *name, MVMuint16 *type) {
-    MVMFrame *cur_frame = tc->cur_frame;
+    MVMFrame *cur_frame = tc->cur_frame->caller;
     if (!name) {
         MVM_exception_throw_adhoc(tc, "Contextual name cannot be null");
     }
@@ -521,4 +527,20 @@ MVMObject * MVM_frame_find_invokee(MVMThreadContext *tc, MVMObject *code) {
         }
     }
     return code;
+}
+
+MVMObject * MVM_frame_context_wrapper(MVMThreadContext *tc, MVMFrame *f) {
+    MVMObject *ctx = f->context_object;
+
+    if (!ctx) {
+        ctx = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTContext);
+        ((MVMContext *)ctx)->body.context = MVM_frame_inc_ref(tc, f);
+
+        if (MVM_casptr(&f->context_object, NULL, ctx) != NULL) {
+            ((MVMContext *)ctx)->body.context = MVM_frame_dec_ref(tc, f);
+            ctx = f->context_object;
+        }
+    }
+
+    return ctx;
 }

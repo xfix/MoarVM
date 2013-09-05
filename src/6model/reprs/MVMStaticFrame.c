@@ -40,6 +40,7 @@ static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, MVMObject *d
     MVMStaticFrameBody *dest_body = (MVMStaticFrameBody *)dest;
     
     dest_body->bytecode = src_body->bytecode;
+    dest_body->bytecode_size = src_body->bytecode_size;
     MVM_ASSIGN_REF(tc, dest_root, dest_body->cu, src_body->cu);
     MVM_ASSIGN_REF(tc, dest_root, dest_body->cuuid, src_body->cuuid);
     MVM_ASSIGN_REF(tc, dest_root, dest_body->name, src_body->name);
@@ -127,6 +128,7 @@ static void gc_free(MVMThreadContext *tc, MVMObject *obj) {
     MVM_checked_free_null(body->static_env);
     MVM_checked_free_null(body->local_types);
     MVM_checked_free_null(body->lexical_types);
+    MVM_checked_free_null(body->lexical_names_list);
     {
         MVMLexicalHashEntry *current, *tmp;
 
@@ -140,8 +142,7 @@ static void gc_free(MVMThreadContext *tc, MVMObject *obj) {
         MVM_checked_free_null(body->lexical_names);
     }
     if (body->prior_invocation) {
-        MVM_frame_dec_ref(tc, body->prior_invocation);
-        body->prior_invocation = NULL;
+        body->prior_invocation = MVM_frame_dec_ref(tc, body->prior_invocation);
     }
 }
 

@@ -27,7 +27,6 @@ typedef struct {
 typedef struct {
     PMC    *st;
     PMC    *sc;
-    INTVAL  bank;
     INTVAL  op;
     PMC    *operands;
 } MAST_Op;
@@ -152,6 +151,8 @@ typedef STRING VMSTR;
 #define ATPOS(vm, arr, i)           (VTABLE_get_pmc_keyed_int(vm, arr, i))
 #define ATPOS_I(vm, arr, i)         (VTABLE_get_integer_keyed_int(vm, arr, i))
 #define ATPOS_S(vm, arr, i)         (VTABLE_get_string_keyed_int(vm, arr, i))
+#define ATPOS_I_C(vm, arr, i)       (VTABLE_get_integer_keyed_int(vm, arr, i))
+#define ATPOS_S_C(vm, arr, i)       (VTABLE_get_string_keyed_int(vm, arr, i))
 #define BINDPOS(vm, arr, i, v)      (VTABLE_set_pmc_keyed_int(vm, arr, i, v))
 #define BINDPOS_I(vm, arr, i, v)    (VTABLE_set_integer_keyed_int(vm, arr, i, v))
 #define BINDPOS_S(vm, arr, i, v)    (VTABLE_set_string_keyed_int(vm, arr, i, v))
@@ -207,7 +208,7 @@ typedef STRING VMSTR;
 
 /* Information about an opcode. */
 typedef struct _MVMOpInfo {
-    unsigned char  opcode;
+    unsigned short opcode;
     const char    *name;
     unsigned char  num_operands;
     unsigned char  operands[MVM_MAX_OPERANDS];

@@ -7,6 +7,7 @@ CAT   = @cat@
 SHELL = @sh@
 
 TRACING = 0
+CGOTO = 0
 NOISY = 0
 
 MSG = @:
@@ -16,7 +17,7 @@ NOERR =
 
 @mknoisy@
 
-CFLAGS    = @cflags@ @ccdef@MVM_TRACING=$(TRACING)
+CFLAGS    = @cflags@ @ccdef@MVM_TRACING=$(TRACING) @ccdef@MVM_CGOTO=$(CGOTO)
 CINCLUDES = @ccinc@3rdparty/libuv/include \
             @ccinc@3rdparty/libuv/src \
             @ccinc@3rdparty/libatomic_ops/src \
@@ -107,6 +108,7 @@ OBJECTS = src/core/args@obj@ \
           src/6model/sc@obj@ \
           src/6model/serialization@obj@ \
           src/mast/compiler@obj@ \
+          src/mast/driver@obj@ \
           src/strings/ascii@obj@ \
           src/strings/utf8@obj@ \
           src/strings/ops@obj@ \
@@ -181,6 +183,8 @@ HEADERS = src/moarvm.h \
           src/6model/reprs/CStruct.h \
           src/6model/reprs/NativeCall.h \
           src/6model/sc.h \
+          src/mast/compiler.h \
+          src/mast/driver.h \
           src/strings/unicode_gen.h \
           src/strings/ascii.h \
           src/strings/utf8.h \
@@ -282,14 +286,19 @@ libuv: @uvlib@
 $(MAIN_OBJECTS) $(OBJECTS): $(HEADERS)
 
 tracing:
-	$(MSG) enable tracing
+	$(MSG) enable tracing dispatch
 	-$(CMD)$(RM) src/main@obj@ src/core/interp@obj@
-	$(CMD)$(MAKE) TRACING=1 NOISY="$(NOISY)"
+	$(CMD)$(MAKE) TRACING=1 CGOTO=0 NOISY="$(NOISY)"
 
-no-tracing:
-	$(MSG) disable tracing
+cgoto:
+	$(MSG) enable computed-goto dispatch
 	-$(CMD)$(RM) src/main@obj@ src/core/interp@obj@
-	$(CMD)$(MAKE) TRACING=0 NOISY="$(NOISY)"
+	$(CMD)$(MAKE) TRACING=0 CGOTO=1 NOISY="$(NOISY)"
+
+no-tracing no-cgoto:
+	$(MSG) enable regular dispatch
+	-$(CMD)$(RM) src/main@obj@ src/core/interp@obj@
+	$(CMD)$(MAKE) TRACING=0 CGOTO=0 NOISY="$(NOISY)"
 
 .c@obj@:
 	$(MSG) compiling $@

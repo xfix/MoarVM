@@ -225,26 +225,26 @@ class NQP::World is HLL::World {
             my $c := nqp::elems(@allcodes);
             my $i := 0;
             while $i < $c {
-#                my $subid := nqp::getcodecuid(@allcodes[$i]);
-#                if nqp::existskey(%!code_objects_to_fix_up, $subid) {
-#                    # First, go over the code objects. Update the $!do, and the
-#                    # entry in the SC. Make sure the newly compiled code is marked
-#                    # as a static code ref.
-#                    my $static := %!code_objects_to_fix_up{$subid}.shift();
-#                    nqp::bindattr($static, %!code_object_types{$subid}, '$!do', @allcodes[$i]);
-#                    nqp::bindattr($static, %!code_object_types{$subid}, '$!clone_callback', nqp::null());
-#                    for %!code_objects_to_fix_up{$subid} {
-#                        nqp::bindattr($_, %!code_object_types{$subid}, '$!do', nqp::clone(@allcodes[$i]));
-#                        nqp::bindattr($_, %!code_object_types{$subid}, '$!clone_callback', nqp::null());
-#                    }
-#                    nqp::markcodestatic(@allcodes[$i]);
-#                    self.update_root_code_ref(%!code_stub_sc_idx{$subid}, @allcodes[$i]);
-#                    
-#                    # Clear up the fixup statements.
-#                    my $fixup_stmts := %!code_object_fixup_list{$subid};
-#                    $fixup_stmts.shift() while +@($fixup_stmts);
-#                }
-#                $i := $i + 1;
+                my $subid := nqp::getcodecuid(@allcodes[$i]);
+                if nqp::existskey(%!code_objects_to_fix_up, $subid) {
+                    # First, go over the code objects. Update the $!do, and the
+                    # entry in the SC. Make sure the newly compiled code is marked
+                    # as a static code ref.
+                    my $static := %!code_objects_to_fix_up{$subid}.shift();
+                    nqp::bindattr($static, %!code_object_types{$subid}, '$!do', @allcodes[$i]);
+                    nqp::bindattr($static, %!code_object_types{$subid}, '$!clone_callback', nqp::null());
+                    for %!code_objects_to_fix_up{$subid} {
+                        nqp::bindattr($_, %!code_object_types{$subid}, '$!do', nqp::clone(@allcodes[$i]));
+                        nqp::bindattr($_, %!code_object_types{$subid}, '$!clone_callback', nqp::null());
+                    }
+                    nqp::markcodestatic(@allcodes[$i]);
+                    self.update_root_code_ref(%!code_stub_sc_idx{$subid}, @allcodes[$i]);
+                    
+                    # Clear up the fixup statements.
+                    my $fixup_stmts := %!code_object_fixup_list{$subid};
+                    $fixup_stmts.shift() while +@($fixup_stmts);
+                }
+                $i := $i + 1;
             }
             
             my $mainline := $compiler.backend.compunit_mainline($compiled);
@@ -1581,12 +1581,44 @@ $ops.add_hll_op('nqp', 'stringify', -> $qastcomp, $op {
 });
 
 $ops.add_hll_op('nqp', 'falsey', -> $qastcomp, $op {
-    nqp::die('falsey NYI');
+    unless $op.list == 1 {
+        nqp::die('falsey op requires one child');
+    }
+    my $val := $qastcomp.as_mast($op[0]);
+    if $val.result_kind == $MVM_reg_int64 {
+        my $not_reg := $*REGALLOC.fresh_register($MVM_reg_int64);
+        my @ins := $val.instructions;
+        push_op(@ins, 'not_i', $not_reg, $val.result_reg);
+        MAST::InstructionList.new(@ins, $not_reg, $MVM_reg_int64)
+    }
+    elsif $val.result_kind == $MVM_reg_obj {
+        my $not_reg := $*REGALLOC.fresh_register($MVM_reg_int64);
+        my @ins := $val.instructions;
+        push_op(@ins, 'isfalse', $not_reg, $val.result_reg);
+        MAST::InstructionList.new(@ins, $not_reg, $MVM_reg_int64)
+    }
+    elsif $val.result_kind == $MVM_reg_str {
+        my $not_reg := $*REGALLOC.fresh_register($MVM_reg_int64);
+        my @ins := $val.instructions;
+        push_op(@ins, 'isfalse_s', $not_reg, $val.result_reg);
+        MAST::InstructionList.new(@ins, $not_reg, $MVM_reg_int64)
+    }
+    else {
+        nqp::die("This case of nqp falsey op NYI");
+    }
 });
 
 # NQP object unbox, which also must somewhat handle coercion.
 
 # XXX TODO
+
+sub push_op(@dest, $op, *@args) {
+    #$op := $op.name if nqp::istype($op, QAST::Op);
+    nqp::push(@dest, MAST::Op.new(
+        :op($op),
+        |@args
+    ));
+}
 
 # From src/NQP/Actions.nqp
 

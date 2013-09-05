@@ -929,7 +929,7 @@ class QAST::MASTRegexCompiler {
         my $sname := fresh_s();
         my @ins := [
             op('const_s', $sname, sval($node.name)),
-            op('findmeth', %*REG<method>, %*REG<cur>, sval('"!dba"')),
+            op('findmeth', %*REG<method>, %*REG<cur>, sval('!dba')),
             call(%*REG<method>, @flags, %*REG<cur>, %*REG<pos>, $sname)
         ];
         release($sname, $MVM_reg_str);
@@ -947,15 +947,8 @@ class QAST::MASTRegexCompiler {
     }
 
     sub op($op, *@args) {
-        # Resolve the op.
-        my $bank;
-        for MAST::Ops.WHO {
-            $bank := ~$_ if nqp::existskey(MAST::Ops.WHO{~$_}, $op);
-        }
-        nqp::die("Unable to resolve MAST op '$op'") unless nqp::defined($bank);
-
         MAST::Op.new(
-            :bank(nqp::substr($bank, 1)), :op($op),
+            :op($op),
             |@args
         );
     }
