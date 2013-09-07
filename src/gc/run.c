@@ -32,6 +32,7 @@ static void register_for_gc_run(MVMThreadContext *tc) {
     MVM_incr(&tc->instance->gc_finish);
     MVM_incr(&tc->instance->gc_ack);
     MVM_decr(&tc->instance->gc_start);
+	GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE, "decr gc_start to %d\n", MVM_load(&tc->instance->gc_start));
 }
 
 /* Does work in a thread's in-tray, if any. */
@@ -53,7 +54,7 @@ static void process_in_tray(MVMThreadContext *tc, MVMuint8 gen, MVMuint32 *put_v
 static MVMuint32 process_sent_items(MVMThreadContext *tc, MVMuint32 *put_vote) {
     /* Is any of our work outstanding? If so, take away our finish vote.
      * If we successfully check all our work, add the finish vote back. */
-    MVMGCPassedWork *work = (MVMGCPassedWork *)MVM_load(&tc->gc_next_to_check);
+    MVMGCPassedWork *work = tc->gc_next_to_check;
     MVMuint32 advanced = 0;
     if (work) {
         /* if we have a submitted work item we haven't claimed a vote for, get a vote. */
@@ -67,10 +68,10 @@ static MVMuint32 process_sent_items(MVMThreadContext *tc, MVMuint32 *put_vote) {
             if (!work) break;
         }
         if (advanced)
-            MVM_store(&tc->gc_next_to_check, work);
+            tc->gc_next_to_check = work;
         /* if all our submitted work items are completed, release the vote. */
         /* otherwise indicate that something we submitted isn't finished */
-        return work ? (MVM_store(&work->upvoted, 1), 1) : 0;
+        return work ? (work->upvoted = 1) : 0;
     }
     return 0;
 }
@@ -108,7 +109,6 @@ static void finish_gc(MVMThreadContext *tc, MVMuint8 gen) {
             put_vote = 0;
         }
     }
-    GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE, "Discovered GC termination\n");
 
     /* Reset GC status flags and cleanup sent items for any work threads. */
     /* This is also where thread destruction happens, and it needs to happen

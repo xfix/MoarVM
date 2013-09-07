@@ -24,8 +24,10 @@ static MVMuint32 signal_one_thread(MVMThreadContext *tc, MVMThreadContext *to_si
     while (1) {
         if (MVM_try_interrupt(tc, to_signal, gc_status))
             return 1;
-        if (MVM_try_steal(tc, to_signal, gc_status))
+        if (MVM_try_steal(tc, to_signal, gc_status)) {
             add_work(tc, to_signal);
+            return 0;
+        }
         if (gc_status == MVMGCStatus_STOLEN
                 || gc_status == MVMGCStatus_INTERRUPT)
             return 0;

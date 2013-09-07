@@ -458,7 +458,7 @@ static void add_in_tray_to_worklist(MVMThreadContext *tc, MVMGCWorklist *worklis
     /* Get work to process. */
     while (1) {
         /* See if there's anything in the in-tray; if not, we're done. */
-        head = *in_tray;
+        head = (MVMGCPassedWork *)MVM_load(in_tray);
         if (head == NULL)
             return;
 
@@ -469,7 +469,7 @@ static void add_in_tray_to_worklist(MVMThreadContext *tc, MVMGCWorklist *worklis
 
     /* Go through list, adding to worklist. */
     while (head) {
-        MVMGCPassedWork *next = head->next;
+        MVMGCPassedWork *next = (MVMGCPassedWork *)MVM_load(&head->next);
         MVMuint32 i;
         for (i = 0; i < head->num_items; i++)
             MVM_gc_worklist_add(tc, worklist, head->items[i]);
@@ -482,7 +482,8 @@ static void add_in_tray_to_worklist(MVMThreadContext *tc, MVMGCWorklist *worklis
 static void MVM_gc_collect_enqueue_stable_for_deletion(MVMThreadContext *tc, MVMSTable *st) {
     MVMSTable *old_head;
     do {
-        old_head = tc->instance->stables_to_free;
+        old_head = (MVMSTable *)MVM_load(&tc->instance->stables_to_free);
+		/* Borrow the forwarder slot ... */
         st->header.forwarder = (MVMCollectable *)old_head;
     } while (!MVM_trycas(&tc->instance->stables_to_free, old_head, st));
 }

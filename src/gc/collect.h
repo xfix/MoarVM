@@ -41,7 +41,7 @@ struct MVMGCPassedWork {
     MVMGCPassedWork *next_by_sender;
     MVMGCPassedWork *last_by_sender;
     AO_t             completed;
-    AO_t             upvoted;
+    MVMuint32        upvoted;
     MVMint32         num_items;
 };
 
