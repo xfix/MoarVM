@@ -75,6 +75,7 @@ typedef double   MVMnum64;
 #include "gc/orchestrate.h"
 #include "gc/gen2.h"
 #include "gc/roots.h"
+#include "gc/run.h"
 #include "gc/wb.h"
 #include "strings/ascii.h"
 #include "strings/utf8.h"

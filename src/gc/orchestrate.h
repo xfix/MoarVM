@@ -3,6 +3,7 @@ void MVM_gc_enter_from_interrupt(MVMThreadContext *tc);
 void MVM_gc_mark_thread_blocked(MVMThreadContext *tc);
 void MVM_gc_mark_thread_unblocked(MVMThreadContext *tc);
 void MVM_gc_global_destruction(MVMThreadContext *tc);
+void MVM_gc_register_child_thread(MVMThreadContext *tc, MVMThreadContext *child_tc);
 
 struct MVMWorkThread {
     MVMThreadContext *tc;
@@ -12,8 +13,8 @@ struct MVMWorkThread {
 typedef enum {
     MVM_GC_DEBUG_ORCHESTRATE = 1,
     MVM_GC_DEBUG_COLLECT = 2,
-/*    MVM_GC_DEBUG_ = 4,
-    MVM_GC_DEBUG_ = 8,
+    MVM_GC_DEBUG_GEN2 = 4,
+/*    MVM_GC_DEBUG_ = 8,
     MVM_GC_DEBUG_ = 16,
     MVM_GC_DEBUG_ = 32,
     MVM_GC_DEBUG_ = 64,
@@ -47,16 +48,43 @@ typedef enum {
     0
 
 #define MVM_GC_DEBUG_ENABLED(flags) \
-    ((MVM_GC_DEBUG_LOG_FLAGS) & (flags))
+    (((MVM_GC_DEBUG_ORCHESTRATE) & (flags)) \
+    || ((MVM_GC_DEBUG_GEN2) & (flags)))
 
+/* Pass 0 as the first parameter if you don't want it to prefix the thread id
+ * and gc run details. */
 #ifdef _MSC_VER
-# define GCDEBUG_LOG(tc, flags, msg, ...) \
-    if (MVM_GC_DEBUG_ENABLED(flags)) \
-        printf((msg), (tc)->thread_id, \
-            MVM_load(&(tc)->instance->gc_seq_number), __VA_ARGS__)
+# define GCDEBUG_LOG(tc, flags, msg, ...) do { \
+    if (MVM_GC_DEBUG_ENABLED(flags)) { \
+        if (tc) printf(("Thread %d run %d : " msg), (tc)->thread_id, \
+            MVM_load(&(tc)->instance->gc_seq_number), __VA_ARGS__); \
+        else printf((msg), __VA_ARGS__); \
+    } \
+} while (0)
 #else
-# define GCDEBUG_LOG(tc, flags, msg, ...) \
-    if (MVM_GC_DEBUG_ENABLED(flags)) \
-        printf((msg), (tc)->thread_id, \
-            MVM_load(&(tc)->instance->gc_seq_number) , ##__VA_ARGS__)
+# define GCDEBUG_LOG(tc, flags, msg, ...) do { \
+    if (MVM_GC_DEBUG_ENABLED(flags)) { \
+        if (tc) printf(("Thread %d run %d : " msg), (tc)->thread_id, \
+                MVM_load(&(tc)->instance->gc_seq_number) , ##__VA_ARGS__); \
+        else printf((msg) , ##__VA_ARGS__); \
+    } \
+} while (0)
 #endif
+
+#define MVM_try_transition(tc, other, tmp, state0, state1) \
+    ((tmp = MVM_cas(&other->gc_status, state0, state1)) == state0)
+
+#define MVM_try_steal(tc, other, tmp) \
+    MVM_try_transition(tc, other, tmp, MVMGCStatus_UNABLE, MVMGCStatus_STOLEN)
+
+#define MVM_try_interrupt(tc, other, tmp) \
+    MVM_try_transition(tc, other, tmp, MVMGCStatus_NONE, MVMGCStatus_INTERRUPT)
+
+#define MVM_try_uninterrupt(tc, other, tmp) \
+    MVM_try_transition(tc, other, tmp, MVMGCStatus_INTERRUPT, MVMGCStatus_NONE)
+
+#define MVM_try_mark_blocked(tc, other, tmp) \
+    MVM_try_transition(tc, other, tmp, MVMGCStatus_NONE, MVMGCStatus_UNABLE)
+
+#define MVM_try_mark_unblocked(tc, other, tmp) \
+    MVM_try_transition(tc, other, tmp, MVMGCStatus_UNABLE, MVMGCStatus_NONE)

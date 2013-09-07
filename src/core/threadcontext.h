@@ -136,9 +136,10 @@ struct MVMThreadContext {
     MVMGCPassedWork *gc_next_to_check;
 
     /* threads to process this gc run. */
-    MVMWorkThread   *gc_work;
-    MVMuint32                gc_work_size;
-    MVMuint32                gc_work_count;
+    MVMWorkThread    *gc_work;
+    MVMuint32         gc_work_size;
+    MVMuint32         gc_work_count;
+    MVMThreadContext *gc_owner_tc;
 
     /* Pool table of chains of frames for each static frame. */
     MVMFrame **frame_pool_table;

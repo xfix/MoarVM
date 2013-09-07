@@ -1,4 +1,5 @@
 #include "moarvm.h"
+#include <platform/threads.h>
 
 /* Temporary structure for passing data to thread start. */
 typedef struct {
@@ -51,7 +52,9 @@ static void start_thread(void *data) {
     MVM_interp_run(tc, &thread_initial_invoke, ts);
 
     /* mark as exited, so the GC will know to clear our stuff. */
-    tc->thread_obj->body.stage = MVM_thread_stage_exited;
+    MVM_store(&tc->thread_obj->body.stage, MVM_thread_stage_exited);
+    GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE, "Thread %d XX(%d) : marking self EXITED\n");
+    MVM_incr(&tc->instance->gc_morgue_thread_count);
 
     /* Now we're done, decrement the reference count of the caller. */
     MVM_frame_dec_ref(tc, ts->caller);
@@ -59,6 +62,8 @@ static void start_thread(void *data) {
     /* Mark ourselves as dying, so that another thread will take care
      * of GC-ing our objects and cleaning up our thread context. */
     MVM_gc_mark_thread_blocked(tc);
+
+    GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE, "Thread %d XX(%d) : thread EXITING.\n");
 
     /* hopefully pop the ts->thread_obj temp */
     MVM_gc_root_temp_pop(tc);
@@ -87,6 +92,8 @@ MVMObject * MVM_thread_start(MVMThreadContext *tc, MVMObject *invokee, MVMObject
 
         /* Create a new thread context and set it up. */
         MVMThreadContext *child_tc = MVM_tc_create(tc->instance);
+
+        MVM_incr(&tc->instance->num_user_threads);
         child->body.tc = child_tc;
         MVM_ASSIGN_REF(tc, child, child->body.invokee, invokee);
         child_tc->thread_obj = child;
@@ -105,10 +112,8 @@ MVMObject * MVM_thread_start(MVMThreadContext *tc, MVMObject *invokee, MVMObject
         /* push this to the *child* tc's temp roots. */
         MVM_gc_root_temp_push(child_tc, (MVMCollectable **)&ts->thread_obj);
 
-        /* Signal to the GC we have a childbirth in progress. The GC
-         * will null it for us. */
-        MVM_gc_mark_thread_blocked(child_tc);
-        MVM_ASSIGN_REF(tc, tc->thread_obj, tc->thread_obj->body.new_child, child);
+        /* Set us up to perform the child's first GC if necessary. */
+        MVM_gc_register_child_thread(tc, child_tc);
 
         /* push to starting threads list */
         threads = &tc->instance->threads;
@@ -123,11 +128,6 @@ MVMObject * MVM_thread_start(MVMThreadContext *tc, MVMObject *invokee, MVMObject
         if (status < 0) {
             MVM_panic(MVM_exitcode_compunit, "Could not spawn thread: errorcode %d", status);
         }
-
-        /* need to run the GC to clear our new_child field in case we try
-         * try to launch another thread before the GC runs and before the
-         * thread starts. */
-        GC_SYNC_POINT(tc);
     }
     else {
         MVM_exception_throw_adhoc(tc,
@@ -143,7 +143,7 @@ void MVM_thread_join(MVMThreadContext *tc, MVMObject *thread_obj) {
         int status;
         MVM_gc_root_temp_push(tc, (MVMCollectable **)&thread);
         MVM_gc_mark_thread_blocked(tc);
-        if (((MVMThread *)thread_obj)->body.stage < MVM_thread_stage_exited) {
+        if (MVM_load(&((MVMThread *)thread_obj)->body.stage) < MVM_thread_stage_exited) {
             status = uv_thread_join(&thread->body.thread);
         }
         else { /* the target already ended */

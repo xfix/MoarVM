@@ -42,6 +42,7 @@ static void add_page(MVMGen2Allocator *al, MVMuint32 bin) {
 
     /* Add the extra page. */
     MVMuint32 cur_page = al->size_classes[bin].num_pages;
+
     al->size_classes[bin].num_pages++;
     al->size_classes[bin].pages = realloc(al->size_classes[bin].pages,
         sizeof(void *) * al->size_classes[bin].num_pages);
@@ -130,10 +131,13 @@ void MVM_gc_gen2_destroy(MVMInstance *i, MVMGen2Allocator *al) {
 
 /* blindly move pages from one gen2 to another */
 void MVM_gc_gen2_transfer(MVMThreadContext *src, MVMThreadContext *dest) {
+    MVMThreadContext *tc = src;
     MVMGen2Allocator *gen2 = src->gen2, *dest_gen2 = dest->gen2;
     MVMuint32 bin, obj_size, page;
     char ***freelist_insert_pos;
 
+    GCDEBUG_LOG(tc, MVM_GC_DEBUG_GEN2, "Thread %d run %d : starting gen2 transfer "
+        "from thread %u to thread %u\n", src->thread_id, dest->thread_id);
     for (bin = 0; bin < MVM_GEN2_BINS; bin++) {
         MVMuint32 orig_dest_num_pages = dest_gen2->size_classes[bin].num_pages;
         char *cur_ptr, *end_ptr;

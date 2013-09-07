@@ -64,6 +64,7 @@ OBJECTS = src/core/args@obj@ \
           src/gc/allocation@obj@ \
           src/gc/worklist@obj@ \
           src/gc/roots@obj@ \
+          src/gc/run@obj@ \
           src/io/fileops@obj@ \
           src/io/socketops@obj@ \
           src/io/dirops@obj@ \
@@ -142,6 +143,7 @@ HEADERS = src/moarvm.h \
           src/gc/worklist.h \
           src/gc/collect.h \
           src/gc/roots.h \
+          src/gc/run.h \
           src/gc/gen2.h \
           src/gc/wb.h \
           src/6model/reprs.h \

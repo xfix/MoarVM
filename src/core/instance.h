@@ -106,6 +106,8 @@ struct MVMInstance {
     AO_t gc_ack;
     /* Linked list (via forwarder) of STables to free. */
     MVMSTable *stables_to_free;
+    /* Number of exited threadcontexts waiting to be reaped by the GC. */
+    AO_t gc_morgue_thread_count;
 
     /* MVMThreads completed starting, running, and/or exited. */
     /* note: used atomically */
