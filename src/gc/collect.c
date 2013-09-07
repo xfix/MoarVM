@@ -156,7 +156,7 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
     gen2 = tc->gen2;
 
     MVM_gc_worklist_mark_frame_roots(tc, worklist);
-    
+
     while ((item_ptr = MVM_gc_worklist_get(tc, worklist))) {
         /* Dereference the object we're considering. */
         MVMCollectable *item = *item_ptr;
