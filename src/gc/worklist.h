@@ -20,6 +20,7 @@ struct MVMGCWorklist {
     MVMFrame        **frames_list;
 
     /* The number of items on the worklist. */
+    /* XXX Yes, we assume we won't get more than max uint32 items! */
     MVMuint32 items;
     MVMuint32 frames;
 
@@ -65,6 +66,7 @@ void MVM_gc_worklist_add_frame_slow(MVMThreadContext *tc, MVMGCWorklist *worklis
 void MVM_gc_worklist_presize_for(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMint32 items);
 void MVM_gc_worklist_destroy(MVMThreadContext *tc, MVMGCWorklist *worklist);
 void MVM_gc_worklist_mark_frame_roots(MVMThreadContext *tc, MVMGCWorklist *worklist);
+void MVM_gc_worklist_copy_to(MVMThreadContext *tc, MVMGCWorklist *source, MVMGCWorklist *dest);
 
 /* The number of pointers we assume the list may need to hold initially;
  * it will be resized as needed. */

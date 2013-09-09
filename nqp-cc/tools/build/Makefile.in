@@ -83,6 +83,7 @@ CLEANUPS = \
   $(OPS_DIR)/*.c \
   $(OPS_DIR)/*$(O) \
   $(OPS_DIR)/*$(LOAD_EXT) \
+  $(OPS_DIR)/*.pdb \
   $(DYNEXT_DIR)/*$(LOAD_EXT) \
   *.pbc \
   *.pir \

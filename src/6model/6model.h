@@ -98,17 +98,15 @@ typedef enum {
  * type object.
  */
 struct MVMCollectable {
-    /* Identifier of the thread that currently owns the object, if any. If the
-     * object is unshared, then this is always the creating thread. If it is
-     * shared then it's whoever currently holds the mutex on it, or 0 if there
-     * is no held mutex. */
-    MVMuint32 owner;
+    /* Address of the thread that manages the memory region in which the
+     * object is allocated. */
+    MVMThreadContext *manager;
 
     /* Collectable flags (see MVMCollectableFlags). */
-    MVMuint16 flags;
+    MVMuint32 flags;
     
     /* Object size, in bytes. */
-    MVMuint16 size;
+    MVMuint32 size;
 
     /* Forwarding pointer, for copying/compacting GC purposes. */
     MVMCollectable *forwarder;

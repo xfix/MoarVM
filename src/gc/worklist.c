@@ -6,9 +6,9 @@ MVMGCWorklist * MVM_gc_worklist_create(MVMThreadContext *tc) {
     worklist->items = 0;
     worklist->frames = 0;
     worklist->alloc = MVM_GC_WORKLIST_START_SIZE;
-    worklist->frames_alloc = MVM_GC_WORKLIST_START_SIZE;
+    worklist->frames_alloc = 0;
     worklist->list  = malloc(worklist->alloc * sizeof(MVMCollectable **));
-    worklist->frames_list  = malloc(worklist->frames_alloc * sizeof(MVMFrame *));
+    worklist->frames_list  = NULL;
     return worklist;
 }
 
@@ -24,8 +24,10 @@ void MVM_gc_worklist_add_slow(MVMThreadContext *tc, MVMGCWorklist *worklist, MVM
 /* Adds an item to the worklist, expanding it if needed. */
 void MVM_gc_worklist_add_frame_slow(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMFrame *frame) {
     if (worklist->frames == worklist->frames_alloc) {
-        worklist->frames_alloc *= 2;
-        worklist->frames_list = realloc(worklist->frames_list, worklist->frames_alloc * sizeof(MVMFrame *));
+        worklist->frames_alloc = worklist->frames_alloc ? worklist->frames_alloc * 2 : MVM_GC_WORKLIST_START_SIZE;
+        worklist->frames_list = worklist->frames_list
+            ? realloc(worklist->frames_list, worklist->frames_alloc * sizeof(MVMFrame *))
+            : malloc(worklist->frames_alloc * sizeof(MVMFrame *));
     }
     worklist->frames_list[worklist->frames++] = frame;
 }
@@ -55,3 +57,14 @@ void MVM_gc_worklist_mark_frame_roots(MVMThreadContext *tc, MVMGCWorklist *workl
         MVM_gc_root_add_frame_roots_to_worklist((tc), (worklist), cur_frame);
 }
 
+/* Append contents of one worklist to another (ignores frames for now). */
+void MVM_gc_worklist_copy_items_to(MVMThreadContext *tc, MVMGCWorklist *source, MVMGCWorklist *dest) {
+    MVMuint32 total_items = source->items + dest->items;
+
+    if (total_items > dest->alloc) {
+        do { dest->alloc *= 2; } while (total_items > dest->alloc);
+        dest->list = realloc(dest->list, dest->alloc * sizeof(MVMCollectable **));
+    }
+    memcpy(dest->list + dest->items, source->list, source->items * sizeof(MVMCollectable **));
+    dest->items = total_items;
+}

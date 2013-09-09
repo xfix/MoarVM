@@ -140,9 +140,11 @@ struct MVMThreadContext {
     MVMuint32         gc_work_size;
     MVMuint32         gc_work_count;
     MVMThreadContext *gc_owner_tc;
+    /* Unique (compacted) id of the thread during a GC run. */
+    AO_t              gc_thread_id;
 
     /* Pool table of chains of frames for each static frame. */
-    MVMFrame **frame_pool_table;
+    MVMFrame         **frame_pool_table;
 
     /* Size of the pool table, so it can grow on demand. */
     MVMuint32          frame_pool_table_size;
@@ -152,7 +154,7 @@ struct MVMThreadContext {
     MVMint32           sc_wb_disable_depth;
 
     /* Any serialization contexts we are compiling. */
-    MVMObject     *compiling_scs;
+    MVMObject         *compiling_scs;
 
     /* Random number generator state. */
     MVMuint64 rand_state[2];

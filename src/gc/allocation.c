@@ -57,7 +57,7 @@ MVMSTable * MVM_gc_allocate_stable(MVMThreadContext *tc, MVMREPROps *repr, MVMOb
         st                = MVM_gc_allocate_zeroed(tc, sizeof(MVMSTable));
         st->header.flags |= MVM_CF_STABLE;
         st->header.size   = sizeof(MVMSTable);
-        st->header.owner  = tc->thread_id;
+        st->header.manager= tc;
         st->REPR          = repr;
         st->invoke        = MVM_6model_invoke_default;
         MVM_ASSIGN_REF(tc, st, st->HOW, how);
@@ -72,7 +72,7 @@ MVMObject * MVM_gc_allocate_type_object(MVMThreadContext *tc, MVMSTable *st) {
         obj                = MVM_gc_allocate_zeroed(tc, sizeof(MVMObject));
         obj->header.flags |= MVM_CF_TYPE_OBJECT;
         obj->header.size   = sizeof(MVMObject);
-        obj->header.owner  = tc->thread_id;
+        obj->header.manager= tc;
         MVM_ASSIGN_REF(tc, obj, obj->st, st);
     });
     return obj;
@@ -84,7 +84,7 @@ MVMObject * MVM_gc_allocate_object(MVMThreadContext *tc, MVMSTable *st) {
     MVMROOT(tc, st, {
         obj               = MVM_gc_allocate_zeroed(tc, st->size);
         obj->header.size  = (MVMuint16)st->size;
-        obj->header.owner = tc->thread_id;
+        obj->header.manager= tc;
         MVM_ASSIGN_REF(tc, obj, obj->st, st);
         if ((obj->header.flags & MVM_CF_SECOND_GEN))
             if (REPR(obj)->refs_frames)

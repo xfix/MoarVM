@@ -25,6 +25,8 @@ static MVMuint32 signal_one_thread(MVMThreadContext *tc, MVMThreadContext *to_si
         if (MVM_try_interrupt(tc, to_signal, gc_status))
             return 1;
         if (MVM_try_steal(tc, to_signal, gc_status)) {
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE,
+                "stole the gc work of thread %d\n", to_signal->thread_id);
             add_work(tc, to_signal);
             return 0;
         }
@@ -85,10 +87,9 @@ void MVM_gc_enter_from_allocator(MVMThreadContext *tc) {
         /* We are the winner of the GC starting race. This gives us some
          * extra responsibilities as well as doing the usual things.
          * First, increment GC sequence number. */
-        MVM_incr(&tc->instance->gc_seq_number);
+        tmp0 = MVM_incr(&tc->instance->gc_seq_number);
         GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE,
-            "GC thread elected coordinator: starting gc seq %d\n",
-            MVM_load(&tc->instance->gc_seq_number));
+            "GC thread elected coordinator: starting gc seq %d\n", tmp0 + 1);
 
         /* Meed to wait for other threads to reset their gc_status from
          * the last GC run. */

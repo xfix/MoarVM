@@ -14,9 +14,9 @@ typedef enum {
     MVM_GC_DEBUG_ORCHESTRATE = 1,
     MVM_GC_DEBUG_COLLECT = 2,
     MVM_GC_DEBUG_GEN2 = 4,
-/*    MVM_GC_DEBUG_ = 8,
-    MVM_GC_DEBUG_ = 16,
-    MVM_GC_DEBUG_ = 32,
+    MVM_GC_DEBUG_PASSEDWORK = 8,
+    MVM_GC_DEBUG_GCSTART = 16,
+/*    MVM_GC_DEBUG_ = 32,
     MVM_GC_DEBUG_ = 64,
     MVM_GC_DEBUG_ = 128,
     MVM_GC_DEBUG_ = 256,
@@ -45,11 +45,11 @@ typedef enum {
  * MVM_GC_DEBUG_ENABLED(flags) if you want something more
  * complicated. */
 #define MVM_GC_DEBUG_LOG_FLAGS \
-    0
+    ( MVM_GC_DEBUG_ORCHESTRATE \
+    | MVM_GC_DEBUG_PASSEDWORK)
 
 #define MVM_GC_DEBUG_ENABLED(flags) \
-    (((MVM_GC_DEBUG_ORCHESTRATE) & (flags)) \
-    || ((MVM_GC_DEBUG_GEN2) & (flags)))
+    ((MVM_GC_DEBUG_LOG_FLAGS) & (flags))
 
 /* Pass 0 as the first parameter if you don't want it to prefix the thread id
  * and gc run details. */

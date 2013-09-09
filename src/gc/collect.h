@@ -36,13 +36,10 @@ typedef enum {
 /* Represents a piece of work (some addresses to visit) that have been passed
  * from one thread doing GC to another thread doing GC. */
 struct MVMGCPassedWork {
-    MVMCollectable **items[MVM_GC_PASS_WORK_SIZE];
+    MVMGCWorklist   *worklist;
     MVMGCPassedWork *next;
     MVMGCPassedWork *next_by_sender;
     MVMGCPassedWork *last_by_sender;
-    AO_t             completed;
-    MVMuint32        upvoted;
-    MVMint32         num_items;
 };
 
 /* Functions. */

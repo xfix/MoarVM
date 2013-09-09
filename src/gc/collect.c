@@ -1,18 +1,5 @@
 #include "moarvm.h"
 
-/* Combines a piece of work that will be passed to another thread with the
- * ID of the target thread to pass it to. */
-typedef struct {
-    MVMuint32        target;
-    MVMGCPassedWork *work;
-} ThreadWork;
-
-/* Current chunks of work we're building up to pass. */
-typedef struct {
-    MVMuint32   num_target_threads;
-    ThreadWork *target_work;
-} WorkToPass;
-
 #ifdef _MSC_VER
 #define do_worklist(tc, worklist, wtp, gen, func, name, ...) do { \
     func(tc, worklist, __VA_ARGS__); \
@@ -136,11 +123,6 @@ void MVM_gc_collect(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
         pass_leftover_work(tc, &wtp);
         free(wtp.target_work);
     }
-
-    /* If it was a full collection, some of the things in gen2 that we root
-     * due to point to gen1 objects may be dead. */
-    if (gen != MVMGCGenerations_Nursery)
-        MVM_gc_root_gen2_cleanup(tc);
 }
 
 /* Processes the current worklist. */
@@ -196,8 +178,8 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
 
         /* If it's owned by a different thread, we need to pass it over to
          * the owning thread. */
-        if (item->owner != tc->thread_id) {
-            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "sending a handle %p to object %p to thread %d\n", item_ptr, item, item->owner);
+        if (item->manager != tc) {
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "sending a handle %p to object %p to thread %d\n", item_ptr, item, item->manager->thread_id);
             pass_work_item(tc, wtp, item_ptr);
             continue;
         }
@@ -222,7 +204,7 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
             /* Catch NULL stable (always sign of trouble) in debug mode. */
             if (MVM_GC_DEBUG_ENABLED(MVM_GC_DEBUG_COLLECT) && !STABLE(item)) {
                 GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "found a zeroed handle %p to object %p\n", item_ptr, item);
-                printf("%d", ((MVMCollectable *)1)->owner);
+                MVM_panic(1, "panic");
             }
 
             /* Did we see it in the nursery before? */
@@ -361,7 +343,7 @@ void MVM_gc_mark_collectable(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMC
 }
 
 /* Adds a chunk of work to another thread's in-tray. */
-static void push_work_to_thread_in_tray(MVMThreadContext *tc, MVMuint32 target, MVMGCPassedWork *work) {
+static void push_work_to_thread_in_tray(MVMThreadContext *tc, MVMThreadContext *target, MVMGCPassedWork *work) {
     MVMint32 j;
     MVMGCPassedWork * volatile *target_tray;
 
@@ -398,10 +380,14 @@ static void push_work_to_thread_in_tray(MVMThreadContext *tc, MVMuint32 target, 
      * after us. */
     target_tray = &target_tc->gc_in_tray;
     while (1) {
-        MVMGCPassedWork *orig = *target_tray;
+        MVMGCPassedWork *orig = (MVMGCPassedWork *)MVM_load(target_tray);
         work->next = orig;
-        if (MVM_casptr(target_tray, orig, work) == orig)
+        if (MVM_casptr(target_tray, orig, work) == orig) {
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_PASSEDWORK,
+                "passed a work item %p to thread %d\n",
+                work, target_tc->thread_id);
             return;
+        }
     }
 }
 
@@ -409,7 +395,7 @@ static void push_work_to_thread_in_tray(MVMThreadContext *tc, MVMuint32 target, 
  * reach the pass threshold then does the passing. */
 static void pass_work_item(MVMThreadContext *tc, WorkToPass *wtp, MVMCollectable **item_ptr) {
     ThreadWork *target_info = NULL;
-    MVMuint32   target      = (*item_ptr)->owner;
+    MVMuint32   target      = (*item_ptr)->manager->gc_thread_id;
     MVMuint32   j;
     MVMInstance *i          = tc->instance;
 
@@ -476,10 +462,11 @@ static void add_in_tray_to_worklist(MVMThreadContext *tc, MVMGCWorklist *worklis
     /* Go through list, adding to worklist. */
     while (head) {
         MVMGCPassedWork *next = (MVMGCPassedWork *)MVM_load(&head->next);
-        MVMuint32 i;
-        for (i = 0; i < head->num_items; i++)
-            MVM_gc_worklist_add(tc, worklist, head->items[i]);
-        MVM_store(&head->completed, 1);
+        MVM_gc_worklist_copy_items_to(tc, head->worklist, worklist);
+        MVM_gc_worklist_destroy(tc, head->worklist);
+        /* Mark it completed for the sender thread. */
+        MVM_store(&head->worklist, NULL);
+        GCDEBUG_LOG(tc, MVM_GC_DEBUG_PASSEDWORK, "completed work item %p\n", head);
         head = next;
     }
 }

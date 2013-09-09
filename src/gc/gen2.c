@@ -172,7 +172,7 @@ void MVM_gc_gen2_transfer(MVMThreadContext *src, MVMThreadContext *dest) {
         /* Visit each page in the source. */
         for (page = 0; page < gen2->size_classes[bin].num_pages; page++) {
             /* Visit all the objects, looking for dead ones and swap the
-             * owner for each of them. */
+             * manager for each of them. */
             cur_ptr = gen2->size_classes[bin].pages[page];
             end_ptr = page + 1 == gen2->size_classes[bin].num_pages
                 ? gen2->size_classes[bin].alloc_pos
@@ -188,8 +188,7 @@ void MVM_gc_gen2_transfer(MVMThreadContext *src, MVMThreadContext *dest) {
                     freelist_insert_pos = (char ***)cur_ptr;
                 }
                 else { /* note: we don't have tests that exercise this path yet. */
-/*                    printf("updating an owner from %d to %d\n", ((MVMCollectable *)cur_ptr)->owner, dest->thread_id);*/
-                    ((MVMCollectable *)cur_ptr)->owner = dest->thread_id;
+                    ((MVMCollectable *)cur_ptr)->manager = dest;
                 }
 
                 /* Move to the next object. */
