@@ -24,7 +24,7 @@ MVMInstance * MVM_vm_create_instance(void) {
     /* No user threads when we start, and next thread to be created gets ID 1
      * (the main thread got ID 0). */
     instance->num_user_threads    = 0;
-    instance->next_user_thread_id = 1;
+    MVM_store(&instance->next_user_thread_id, 1);
 
     /* Set up the permanent roots storage. */
     instance->num_permroots   = 0;
@@ -55,10 +55,10 @@ MVMInstance * MVM_vm_create_instance(void) {
 
     /* Create main thread object, and also make it the start of the all threads
      * linked list. */
-    instance->threads =
-        instance->main_thread->thread_obj = (MVMThread *)
+    MVM_store(&instance->threads,
+        (instance->main_thread->thread_obj = (MVMThread *)
             REPR(instance->boot_types->BOOTThread)->allocate(
-                instance->main_thread, STABLE(instance->boot_types->BOOTThread));
+                instance->main_thread, STABLE(instance->boot_types->BOOTThread))));
     instance->threads->body.stage = MVM_thread_stage_started;
     instance->threads->body.tc = instance->main_thread;
 
@@ -143,20 +143,28 @@ void MVM_vm_dump_file(MVMInstance *instance, const char *filename) {
     free(dump);
 }
 
-/* Destroys a VM instance. */
+/* Destroys a VM instance. This must be called only from
+ * the main thread. */
 void MVM_vm_destroy_instance(MVMInstance *instance) {
     MVMuint16 i;
 
-    /* TODO: Lots of cleanup. */
+    /* Run the GC global destruction phase. After this,
+     * no 6model object pointers should be accessed. */
+    MVM_gc_global_destruction(instance->main_thread);
+
+    /* Free various instance-wide storage. */
+    MVM_checked_free_null(instance->boot_types);
+    MVM_checked_free_null(instance->str_consts);
+    MVM_checked_free_null(instance->repr_registry);
+    MVM_HASH_DESTROY(hash_handle, MVMREPRHashEntry, instance->repr_name_to_id_hash);
+
+    /* Clean up GC permanent roots related resources. */
+    uv_mutex_destroy(&instance->mutex_permroots);
+    MVM_checked_free_null(instance->permroots);
 
     /* Destroy main thread contexts. */
     MVM_tc_destroy(instance->main_thread);
 
-    /* Clean up GC permanent roots related resources. */
-    uv_mutex_destroy(&instance->mutex_permroots);
-    free(instance->permroots);
-
     /* Clear up VM instance memory. */
     free(instance);
-
 }

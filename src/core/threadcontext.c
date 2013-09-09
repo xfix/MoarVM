@@ -41,6 +41,10 @@ MVMThreadContext * MVM_tc_create(MVMInstance *instance) {
     if (instance->CallCapture)
         tc->cur_usecapture = MVM_repr_alloc_init(tc, instance->CallCapture);
 
+    /* Initialize random number generator state. */
+    tc->rand_state[0] = 'T';
+    tc->rand_state[1] = 'M';
+
     return tc;
 }
 
@@ -57,9 +61,14 @@ void MVM_tc_destroy(MVMThreadContext *tc) {
     /* Destroy the second generation allocator. */
     MVM_gc_gen2_destroy(tc->instance, tc->gen2);
 
-    /* Free the threads work container */
-    if (tc->gc_work)
-        free(tc->gc_work);
+    /* Free the thread-specific storage */
+    MVM_checked_free_null(tc->gc_work);
+    MVM_checked_free_null(tc->temproots);
+    MVM_checked_free_null(tc->gen2roots);
+    MVM_checked_free_null(tc->frame_pool_table);
+
+    /* destroy the libuv event loop */
+    uv_loop_delete(tc->loop);
 
     /* Free the thread context itself. */
     memset(tc, 0, sizeof(MVMThreadContext));

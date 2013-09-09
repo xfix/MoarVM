@@ -1197,7 +1197,8 @@ QAST::MASTOperations.add_core_moarop_mapping('newexception', 'newexception');
 QAST::MASTOperations.add_core_moarop_mapping('backtracestrings', 'backtracestrings');
 # XXX backtrace
 QAST::MASTOperations.add_core_moarop_mapping('throw', 'throwdyn');
-# XXX rethrow, resume
+QAST::MASTOperations.add_core_moarop_mapping('rethrow', 'rethrow');
+# XXX resume
 
 my %handler_names := nqp::hash(
     'CATCH',   $HandlerCategory::catch,
@@ -1462,7 +1463,7 @@ QAST::MASTOperations.add_core_moarop_mapping('closefh', 'close_fh', 0);
 QAST::MASTOperations.add_core_moarop_mapping('chmod', 'chmod_f', 0);
 QAST::MASTOperations.add_core_moarop_mapping('unlink', 'delete_f', 0);
 QAST::MASTOperations.add_core_moarop_mapping('rmdir', 'rmdir', 0);
-# QAST::MASTOperations.add_core_moarop_mapping('cwd', ?);
+QAST::MASTOperations.add_core_moarop_mapping('cwd', 'cwd');
 QAST::MASTOperations.add_core_moarop_mapping('chdir', 'chdir', 0);
 QAST::MASTOperations.add_core_moarop_mapping('mkdir', 'mkdir', 0);
 QAST::MASTOperations.add_core_moarop_mapping('rename', 'rename_f', 0);
@@ -1858,6 +1859,10 @@ QAST::MASTOperations.add_core_moarop_mapping('nfarunalt', 'nfarunalt', 0);
 QAST::MASTOperations.add_core_moarop_mapping('exit', 'exit', 0);
 QAST::MASTOperations.add_core_moarop_mapping('sleep', 'sleep', 0);
 QAST::MASTOperations.add_core_moarop_mapping('getenvhash', 'getenvhash');
+QAST::MASTOperations.add_core_moarop_mapping('shell', 'shell');
+QAST::MASTOperations.add_core_moarop_mapping('rand_i', 'rand_i');
+QAST::MASTOperations.add_core_moarop_mapping('rand_n', 'rand_n');
+QAST::MASTOperations.add_core_moarop_mapping('seed', 'seed');
 
 # MoarVM-specific compilation ops
 QAST::MASTOperations.add_core_moarop_mapping('masttofile', 'masttofile', 2);

@@ -97,15 +97,18 @@ struct MVMInstance {
 
     /* The current GC run sequence number. May wrap around over time; that
      * is fine since only equality ever matters. */
-    MVMuint32 gc_seq_number;
+    AO_t gc_seq_number;
     /* The number of threads that vote for starting GC. */
     AO_t gc_start;
     /* The number of threads that still need to vote for considering GC done. */
     AO_t gc_finish;
     /* The number of threads that have yet to acknowledge the finish. */
     AO_t gc_ack;
+    /* Linked list (via forwarder) of STables to free. */
+    MVMSTable *stables_to_free;
 
     /* MVMThreads completed starting, running, and/or exited. */
+    /* note: used atomically */
     MVMThread *threads;
 
     /* Number of passed command-line args */

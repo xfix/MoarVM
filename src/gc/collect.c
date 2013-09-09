@@ -1,12 +1,5 @@
 #include "moarvm.h"
 
-#define GCCOLL_DEBUG 0
-#ifdef _MSC_VER
-# define GCCOLL_LOG(tc, msg, ...) if (GCCOLL_DEBUG) printf((msg), (tc)->thread_id, (tc)->instance->gc_seq_number, __VA_ARGS__)
-#else
-# define GCCOLL_LOG(tc, msg, ...) if (GCCOLL_DEBUG) printf((msg), (tc)->thread_id, (tc)->instance->gc_seq_number , ##__VA_ARGS__)
-#endif
-
 /* Combines a piece of work that will be passed to another thread with the
  * ID of the target thread to pass it to. */
 typedef struct {
@@ -20,7 +13,7 @@ typedef struct {
     ThreadWork *target_work;
 } WorkToPass;
 
-/* Foward decls. */
+/* Forward decls. */
 static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, WorkToPass *wtp, MVMuint8 gen);
 static void pass_work_item(MVMThreadContext *tc, WorkToPass *wtp, MVMCollectable **item_ptr);
 static void pass_leftover_work(MVMThreadContext *tc, WorkToPass *wtp);
@@ -69,28 +62,28 @@ void MVM_gc_collect(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
         tc->nursery_alloc_limit = (char *)tc->nursery_alloc + MVM_NURSERY_SIZE;
 
         MVM_gc_worklist_add(tc, worklist, &tc->thread_obj);
-        GCCOLL_LOG(tc, "Thread %d run %d : processing %d items from thread_obj\n", worklist->items);
+        GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : processing %d items from thread_obj\n", worklist->items);
         process_worklist(tc, worklist, &wtp, gen);
 
         /* Add permanent roots and process them; only one thread will do
         * this, since they are instance-wide. */
         if (what_to_do != MVMGCWhatToDo_NoInstance) {
             MVM_gc_root_add_permanents_to_worklist(tc, worklist);
-            GCCOLL_LOG(tc, "Thread %d run %d : processing %d items from instance permanents\n", worklist->items);
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : processing %d items from instance permanents\n", worklist->items);
             process_worklist(tc, worklist, &wtp, gen);
             MVM_gc_root_add_instance_roots_to_worklist(tc, worklist);
-            GCCOLL_LOG(tc, "Thread %d run %d : processing %d items from instance roots\n", worklist->items);
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : processing %d items from instance roots\n", worklist->items);
             process_worklist(tc, worklist, &wtp, gen);
         }
 
         /* Add per-thread state to worklist and process it. */
         MVM_gc_root_add_tc_roots_to_worklist(tc, worklist);
-        GCCOLL_LOG(tc, "Thread %d run %d : processing %d items from TC objects\n", worklist->items);
+        GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : processing %d items from TC objects\n", worklist->items);
         process_worklist(tc, worklist, &wtp, gen);
 
         /* Add temporary roots and process them (these are per-thread). */
         MVM_gc_root_add_temps_to_worklist(tc, worklist);
-        GCCOLL_LOG(tc, "Thread %d run %d : processing %d items from thread temps\n", worklist->items);
+        GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : processing %d items from thread temps\n", worklist->items);
         process_worklist(tc, worklist, &wtp, gen);
 
         /* Add things that are roots for the first generation because they are
@@ -100,20 +93,20 @@ void MVM_gc_collect(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
         * the gen2 rooting keeps them alive forever). */
         if (gen == MVMGCGenerations_Nursery) {
             MVM_gc_root_add_gen2s_to_worklist(tc, worklist);
-            GCCOLL_LOG(tc, "Thread %d run %d : processing %d items from gen2 \n", worklist->items);
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : processing %d items from gen2 \n", worklist->items);
             process_worklist(tc, worklist, &wtp, gen);
         }
 
         /* Find roots in frames and process them. */
         if (tc->cur_frame) {
             MVM_gc_worklist_add_frame(tc, worklist, tc->cur_frame);
-            GCCOLL_LOG(tc, "Thread %d run %d : processing %d items from cur_frame \n", worklist->items);
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : processing %d items from cur_frame \n", worklist->items);
 			process_worklist(tc, worklist, &wtp, gen);
 		}
 
         /* Process anything in the in-tray. */
         add_in_tray_to_worklist(tc, worklist);
-        GCCOLL_LOG(tc, "Thread %d run %d : processing %d items from in tray \n", worklist->items);
+        GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : processing %d items from in tray \n", worklist->items);
         process_worklist(tc, worklist, &wtp, gen);
 
         /* At this point, we have probably done most of the work we will
@@ -124,7 +117,7 @@ void MVM_gc_collect(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
     else {
         /* We just need to process anything in the in-tray. */
         add_in_tray_to_worklist(tc, worklist);
-        GCCOLL_LOG(tc, "Thread %d run %d : processing %d items from in tray \n", worklist->items);
+        GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : processing %d items from in tray \n", worklist->items);
         process_worklist(tc, worklist, &wtp, gen);
     }
 
@@ -178,12 +171,12 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
          * forwarding address already. Just update this pointer to the
          * new address and we're done. */
         if (item->forwarder) {
-            if (GCCOLL_DEBUG) {
+            if (MVM_GC_DEBUG_ENABLED(MVM_GC_DEBUG_COLLECT)) {
                 if (*item_ptr != item->forwarder) {
-                    GCCOLL_LOG(tc, "Thread %d run %d : updating handle %p from %p to forwarder %p\n", item_ptr, item, item->forwarder);
+                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : updating handle %p from %p to forwarder %p\n", item_ptr, item, item->forwarder);
                 }
                 else {
-                    GCCOLL_LOG(tc, "Thread %d run %d : already visited handle %p to forwarder %p\n", item_ptr, item->forwarder);
+                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : already visited handle %p to forwarder %p\n", item_ptr, item->forwarder);
                 }
             }
             *item_ptr = item->forwarder;
@@ -198,7 +191,7 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
         /* If it's owned by a different thread, we need to pass it over to
          * the owning thread. */
         if (item->owner != tc->thread_id) {
-            GCCOLL_LOG(tc, "Thread %d run %d : sending a handle %p to object %p to thread %d\n", item_ptr, item, item->owner);
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : sending a handle %p to object %p to thread %d\n", item_ptr, item, item->owner);
             pass_work_item(tc, wtp, item_ptr);
             continue;
         }
@@ -210,19 +203,19 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
              * done by setting the forwarding pointer to the object itself,
              * since we don't do moving. */
             new_addr = item;
-            if (GCCOLL_DEBUG) {
+            if (MVM_GC_DEBUG_ENABLED(MVM_GC_DEBUG_COLLECT)) {
                 if (new_addr != item) {
-                    GCCOLL_LOG(tc, "Thread %d run %d : updating handle %p from referent %p to %p\n", item_ptr, item, new_addr);
+                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : updating handle %p from referent %p to %p\n", item_ptr, item, new_addr);
                 }
                 else {
-                    GCCOLL_LOG(tc, "Thread %d run %d : handle %p was already %p\n", item_ptr, new_addr);
+                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : handle %p was already %p\n", item_ptr, new_addr);
                 }
             }
             *item_ptr = item->forwarder = new_addr;
         } else {
             /* Catch NULL stable (always sign of trouble) in debug mode. */
-            if (GCCOLL_DEBUG && !STABLE(item)) {
-                GCCOLL_LOG(tc, "Thread %d run %d : found a zeroed handle %p to object %p\n", item_ptr, item);
+            if (MVM_GC_DEBUG_ENABLED(MVM_GC_DEBUG_COLLECT) && !STABLE(item)) {
+                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : found a zeroed handle %p to object %p\n", item_ptr, item);
                 printf("%d", ((MVMCollectable *)1)->owner);
             }
 
@@ -234,7 +227,7 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
 
                 /* Copy the object to the second generation and mark it as
                  * living there. */
-                GCCOLL_LOG(tc, "Thread %d run %d : copying an object %p of size %d to gen2 %p\n",
+                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : copying an object %p of size %d to gen2 %p\n",
                     item, item->size, new_addr);
                 memcpy(new_addr, item, item->size);
                 new_addr->flags ^= MVM_CF_NURSERY_SEEN;
@@ -258,7 +251,7 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
                  * iteration. Allocate space in the nursery. */
                 new_addr = (MVMCollectable *)tc->nursery_alloc;
                 tc->nursery_alloc = (char *)tc->nursery_alloc + item->size;
-                GCCOLL_LOG(tc, "Thread %d run %d : copying an object %p of size %d to tospace %p\n",
+                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : copying an object %p of size %d to tospace %p\n",
                     item, item->size, new_addr);
 
                 /* Copy the object to tospace and mark it as seen in the
@@ -270,8 +263,8 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
 
             /* Store the forwarding pointer and update the original
              * reference. */
-            if (GCCOLL_DEBUG && new_addr != item) {
-                GCCOLL_LOG(tc, "Thread %d run %d : updating handle %p from referent %p to %p\n", item_ptr, item, new_addr);
+            if (MVM_GC_DEBUG_ENABLED(MVM_GC_DEBUG_COLLECT) && new_addr != item) {
+                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : updating handle %p from referent %p to %p\n", item_ptr, item, new_addr);
             }
             *item_ptr = item->forwarder = new_addr;
         }
@@ -321,7 +314,7 @@ void MVM_gc_mark_collectable(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMC
          * that will need updating. Note that we are passing the address
          * of the object *after* copying it since those are the addresses
          * we care about updating; the old chunk of memory is now dead! */
-        if (GCCOLL_DEBUG && !STABLE(new_addr_obj))
+        if (MVM_GC_DEBUG_ENABLED(MVM_GC_DEBUG_COLLECT) && !STABLE(new_addr_obj))
             MVM_panic(MVM_exitcode_gcnursery, "Found an outdated reference to address %p", new_addr);
         if (REPR(new_addr_obj)->gc_mark)
             REPR(new_addr_obj)->gc_mark(tc, STABLE(new_addr_obj), OBJECT_BODY(new_addr_obj), worklist);
@@ -373,7 +366,7 @@ static void push_work_to_thread_in_tray(MVMThreadContext *tc, MVMuint32 target, 
         target_tc = tc->instance->main_thread;
     }
     else {
-        MVMThread *t = tc->instance->threads;
+        MVMThread *t = (MVMThread *)MVM_load(&tc->instance->threads);
         do {
             if (t->body.tc->thread_id == target) {
                 target_tc = t->body.tc;
@@ -390,8 +383,8 @@ static void push_work_to_thread_in_tray(MVMThreadContext *tc, MVMuint32 target, 
         work->last_by_sender = tc->gc_sent_items;
     }
     /* queue it up to check if the check list isn't clear */
-    if (!tc->gc_next_to_check) {
-        tc->gc_next_to_check = work;
+    if (!MVM_load(&tc->gc_next_to_check)) {
+        MVM_store(&tc->gc_next_to_check, work);
     }
     tc->gc_sent_items = work;
 
@@ -480,9 +473,18 @@ static void add_in_tray_to_worklist(MVMThreadContext *tc, MVMGCWorklist *worklis
         MVMuint32 i;
         for (i = 0; i < head->num_items; i++)
             MVM_gc_worklist_add(tc, worklist, head->items[i]);
-        head->completed = 1;
+        MVM_store(&head->completed, 1);
         head = next;
     }
+}
+
+/* Save dead STable pointers to delete later.. */
+static void MVM_gc_collect_enqueue_stable_for_deletion(MVMThreadContext *tc, MVMSTable *st) {
+    MVMSTable *old_head;
+    do {
+        old_head = tc->instance->stables_to_free;
+        st->header.forwarder = (MVMCollectable *)old_head;
+    } while (!MVM_trycas(&tc->instance->stables_to_free, old_head, st));
 }
 
 /* Some objects, having been copied, need no further attention. Others
@@ -504,7 +506,7 @@ void MVM_gc_collect_free_nursery_uncopied(MVMThreadContext *tc, void *limit) {
             /* Object instance. If dead, call gc_free if needed. Scan is
              * incremented by object size. */
             MVMObject *obj = (MVMObject *)item;
-/*            GCCOLL_LOG(tc, "Thread %d run %d : collecting an object %d in the nursery\n", item);*/
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : collecting an object %d in the nursery with reprid %d\n", item, REPR(obj)->ID);
             if (dead && REPR(obj)->gc_free)
                 REPR(obj)->gc_free(tc, obj);
         }
@@ -512,14 +514,10 @@ void MVM_gc_collect_free_nursery_uncopied(MVMThreadContext *tc, void *limit) {
             /* Type object; doesn't have anything extra that needs freeing. */
         }
         else if (item->flags & MVM_CF_STABLE) {
-            /* Dead STables are a little interesting. Of course, there is
-             * stuff to free, but there's also an ordering issue: we need
-             * to make sure we don't toss these until we freed up all the
-             * other things, since the size data held in the STable may be
-             * needed in order to finish walking the fromspace! So we will
-             * add them to a list and then free them all at the end. */
+            MVMSTable *st = (MVMSTable *)item;
             if (dead) {
-                MVM_panic(MVM_exitcode_gcnursery, "Can't free STables in the GC yet");
+/*            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : enqueuing an STable %d in the nursery to be freed\n", item);*/
+                MVM_gc_collect_enqueue_stable_for_deletion(tc, st);
             }
         }
         else {
@@ -544,6 +542,18 @@ void MVM_gc_collect_cleanup_gen2roots(MVMThreadContext *tc) {
         if (gen2roots[i]->forwarder)
             gen2roots[ins_pos++] = gen2roots[i];
     tc->num_gen2roots = ins_pos;
+}
+
+/* Free STables (in any thread/generation!) queued to be freed. */
+void MVM_gc_collect_free_stables(MVMThreadContext *tc) {
+    MVMSTable *st = tc->instance->stables_to_free;
+    while (st) {
+        MVMSTable *st_to_free = st;
+        st = (MVMSTable *)st_to_free->header.forwarder;
+        st_to_free->header.forwarder = NULL;
+        MVM_6model_stable_gc_free(tc, st_to_free);
+    }
+    tc->instance->stables_to_free = NULL;
 }
 
 /* Goes through the unmarked objects in the second generation heap and builds
@@ -591,7 +601,7 @@ void MVM_gc_collect_free_gen2_unmarked(MVMThreadContext *tc) {
                     col->forwarder = NULL;
                 }
                 else {
-                    GCCOLL_LOG(tc, "Thread %d run %d : collecting an object %p in the gen2\n", col);
+                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "Thread %d run %d : collecting an object %p in the gen2\n", col);
                     /* No, it's dead. Do any cleanup. */
                     if (!(col->flags & (MVM_CF_TYPE_OBJECT | MVM_CF_STABLE))) {
                         /* Object instance; call gc_free if needed. */
@@ -603,7 +613,22 @@ void MVM_gc_collect_free_gen2_unmarked(MVMThreadContext *tc) {
                         /* Type object; doesn't have anything extra that needs freeing. */
                     }
                     else if (col->flags & MVM_CF_STABLE) {
-                        MVM_panic(MVM_exitcode_gcnursery, "Can't free STables in gen2 GC yet");
+                        if (col->sc == (MVMSerializationContext *)1) {
+                            /* We marked it dead last time, kill it. */
+                            MVM_6model_stable_gc_free(tc, (MVMSTable *)col);
+                        }
+                        else {
+                            if (MVM_load(&tc->gc_status) == MVMGCStatus_NONE) {
+                                /* We're in global destruction, so enqueue to the end
+                                 * like we do in the nursery */
+                                MVM_gc_collect_enqueue_stable_for_deletion(tc, (MVMSTable *)col);
+                            } else {
+                                /* There will definitely be another gc run, so mark it as "died last time". */
+                                col->sc = (MVMSerializationContext *)1;
+                            }
+                            /* Skip the freelist updating. */
+                            continue;
+                        }
                     }
                     else {
                         printf("item flags: %d\n", col->flags);

@@ -76,6 +76,7 @@ struct MVMThreadContext {
     /* The frame we're currently executing. */
     MVMFrame *cur_frame;
 
+    /* libuv event loop */
     uv_loop_t *loop;
 
     /* The usecapture op can, without allocating, have a way to talk about the
@@ -151,6 +152,9 @@ struct MVMThreadContext {
 
     /* Any serialization contexts we are compiling. */
     MVMObject     *compiling_scs;
+
+    /* Random number generator state. */
+    MVMuint64 rand_state[2];
 };
 
 MVMThreadContext * MVM_tc_create(MVMInstance *instance);
