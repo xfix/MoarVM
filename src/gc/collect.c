@@ -462,10 +462,11 @@ static void add_in_tray_to_worklist(MVMThreadContext *tc, MVMGCWorklist *worklis
     /* Go through list, adding to worklist. */
     while (head) {
         MVMGCPassedWork *next = (MVMGCPassedWork *)MVM_load(&head->next);
-        MVM_gc_worklist_copy_items_to(tc, head->worklist, worklist);
-        MVM_gc_worklist_destroy(tc, head->worklist);
-        /* Mark it completed for the sender thread. */
-        MVM_store(&head->worklist, NULL);
+        MVMGCWorklist *head_worklist = (MVMGCWorklist *)head;
+        MVM_gc_worklist_copy_items_to(tc, head_worklist, worklist);
+
+        /* Signal that we've consumed it; the sender will destroy it. */
+        head_worklist->items = 0;
         GCDEBUG_LOG(tc, MVM_GC_DEBUG_PASSEDWORK, "completed work item %p\n", head);
         head = next;
     }

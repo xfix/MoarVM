@@ -3,6 +3,16 @@
 #define register_gc_run_thread_id(thread) \
     MVM_store(&(thread)->gc_thread_id, MVM_incr(&(thread)->instance->gc_thread_id) + 1)
 
+static void prepare_wtp_table(MVMThreadContext *tc) {
+    MVMuint32 num_threads = MVM_load(&tc->instance->gc_thread_id);
+
+    if (num_threads > 1 && tc->gc_wtp_size < num_threads) {
+        MVMGCWorklist **wtp = malloc(num_threads * sizeof(MVMGCWorklist *));
+        MVM_checked_free_null(tc->gc_wtp);
+        tc->gc_wtp = wtp;
+    }
+}
+
 /* Processes the gc_work queue, attempting to steal the children.  They are
  * guaranteed to exist because every thread lasts at least 1 GC run, and the
  * entry stays in this table no more than 1 GC run. */
@@ -43,6 +53,7 @@ static void register_for_gc_run(MVMThreadContext *tc) {
     tc->gc_work_count = count;
     /* Register for a GC thread ID. */
     register_gc_run_thread_id(tc);
+    prepare_wtp_table(tc);
 
     /* Increment the finish and ack counters to signify we're registering in
      * the GC run and for the other to wait for us to finish those two
@@ -85,9 +96,10 @@ static MVMuint32 verify_sent_items(MVMThreadContext *tc, MVMuint32 *put_vote) {
             MVM_incr(&tc->instance->gc_finish);
             *put_vote = 1;
         }
-        while ((void *)MVM_load(&work->worklist) == NULL) {
+        while (work->worklist.items == 0) {
             advanced = 1;
             work = work->next_by_sender;
+            MVM_gc_worklist_destroy(tc, (MVMGCWorklist *)work);
             if (!work) break;
         }
         if (advanced)

@@ -44,9 +44,7 @@ void MVM_gc_worklist_presize_for(MVMThreadContext *tc, MVMGCWorklist *worklist, 
 /* Free a worklist. */
 void MVM_gc_worklist_destroy(MVMThreadContext *tc, MVMGCWorklist *worklist) {
     free(worklist->list);
-    worklist->list = NULL;
-    free(worklist->frames_list);
-    worklist->frames_list = NULL;
+    MVM_checked_free_null(worklist->frames_list);
     free(worklist);
 }
 

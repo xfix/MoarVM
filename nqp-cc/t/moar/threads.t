@@ -26,7 +26,7 @@ sub make_thread_type($frame) {
 
     $type
 }
-
+if 0 {
 mast_frame_output_is(-> $frame, @ins, $cu {
         sub thread_code() {
             my $frame := MAST::Frame.new();
@@ -184,7 +184,7 @@ mast_frame_output_is(-> $frame, @ins, $cu {
     },
     "Before new threads\nIn new thread\nIn new thread\nJoined both threads\n",
     "Can start and join multiple threads");
-
+}
 mast_frame_output_is(-> $frame, @ins, $cu {
         sub thread_code() {
             my $frame := MAST::Frame.new();

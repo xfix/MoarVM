@@ -142,6 +142,9 @@ struct MVMThreadContext {
     MVMThreadContext *gc_owner_tc;
     /* Unique (compacted) id of the thread during a GC run. */
     AO_t              gc_thread_id;
+    /* Table of worklists to pass to other thread contexts. */
+    MVMGCWorklist   **gc_wtp;
+    MVMuint32         gc_wtp_size;
 
     /* Pool table of chains of frames for each static frame. */
     MVMFrame         **frame_pool_table;
