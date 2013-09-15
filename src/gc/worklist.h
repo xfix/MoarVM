@@ -67,6 +67,7 @@ void MVM_gc_worklist_presize_for(MVMThreadContext *tc, MVMGCWorklist *worklist, 
 void MVM_gc_worklist_destroy(MVMThreadContext *tc, MVMGCWorklist *worklist);
 void MVM_gc_worklist_mark_frame_roots(MVMThreadContext *tc, MVMGCWorklist *worklist);
 void MVM_gc_worklist_copy_to(MVMThreadContext *tc, MVMGCWorklist *source, MVMGCWorklist *dest);
+void MVM_gc_worklist_init(MVMThreadContext *tc, MVMGCWorklist *worklist);
 
 /* The number of pointers we assume the list may need to hold initially;
  * it will be resized as needed. */

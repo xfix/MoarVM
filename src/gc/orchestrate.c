@@ -13,6 +13,7 @@ static void add_work(MVMThreadContext *tc, MVMThreadContext *stolen) {
         tc->gc_work = realloc(tc->gc_work, tc->gc_work_size * sizeof(MVMWorkThread));
     }
     tc->gc_work[tc->gc_work_count++].tc = stolen;
+    MVM_store(&stolen->gc_owner_tc, tc);
 }
 
 /* Tries to signal a thread to interrupt, or else steal it. */

@@ -7,7 +7,7 @@ static void prepare_wtp_table(MVMThreadContext *tc) {
     MVMuint32 num_threads = MVM_load(&tc->instance->gc_thread_id);
 
     if (num_threads > 1 && tc->gc_wtp_size < num_threads) {
-        MVMGCWorklist **wtp = malloc(num_threads * sizeof(MVMGCWorklist *));
+        MVMGCPassedWork **wtp = malloc(num_threads * sizeof(MVMGCPassedWork *));
         MVM_checked_free_null(tc->gc_wtp);
         tc->gc_wtp = wtp;
     }

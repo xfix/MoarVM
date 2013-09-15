@@ -1,14 +1,18 @@
 #include "moarvm.h"
 
-/* Allocates a new GC worklist. */
-MVMGCWorklist * MVM_gc_worklist_create(MVMThreadContext *tc) {
-    MVMGCWorklist *worklist = malloc(sizeof(MVMGCWorklist));
+void MVM_gc_worklist_init(MVMThreadContext *tc, MVMGCWorklist *worklist) {
     worklist->items = 0;
     worklist->frames = 0;
     worklist->alloc = MVM_GC_WORKLIST_START_SIZE;
     worklist->frames_alloc = 0;
     worklist->list  = malloc(worklist->alloc * sizeof(MVMCollectable **));
     worklist->frames_list  = NULL;
+}
+
+/* Allocates a new GC worklist. */
+MVMGCWorklist * MVM_gc_worklist_create(MVMThreadContext *tc) {
+    MVMGCWorklist *worklist = malloc(sizeof(MVMGCWorklist));
+    MVM_gc_worklist_init(tc, worklist);
     return worklist;
 }
 
