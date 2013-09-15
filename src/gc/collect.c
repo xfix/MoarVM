@@ -1,25 +1,25 @@
 #include "moarvm.h"
 
 #ifdef _MSC_VER
-#define do_worklist(tc, worklist, wtp, gen, func, name, ...) do { \
+#define do_worklist(tc, worklist, gen, func, name, ...) do { \
     func(tc, worklist, __VA_ARGS__); \
     GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, \
         "processing %d items from " name "\n", worklist->items); \
-    process_worklist(tc, worklist, &wtp, gen); \
+    process_worklist(tc, worklist, gen); \
 } while (0)
 #else
-#define do_worklist(tc, worklist, wtp, gen, func, name, ...) do { \
+#define do_worklist(tc, worklist, gen, func, name, ...) do { \
     func(tc, worklist , ##__VA_ARGS__); \
     GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, \
         "processing %d items from " name "\n", worklist->items); \
-    process_worklist(tc, worklist, &wtp, gen); \
+    process_worklist(tc, worklist, gen); \
 } while (0)
 #endif
 
 /* Forward decls. */
-static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, WorkToPass *wtp, MVMuint8 gen);
-static void pass_work_item(MVMThreadContext *tc, WorkToPass *wtp, MVMCollectable **item_ptr);
-static void pass_leftover_work(MVMThreadContext *tc, WorkToPass *wtp);
+static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMuint8 gen);
+static void pass_work_item(MVMThreadContext *tc, MVMCollectable **item_ptr);
+static void pass_leftover_work(MVMThreadContext *tc, MVMGCPassedWork *wtp);
 static void add_in_tray_to_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist);
 
 /* Does a garbage collection run. Exactly what it does is configured by the
@@ -46,11 +46,6 @@ void MVM_gc_collect(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
     /* Create a GC worklist. */
     MVMGCWorklist *worklist = MVM_gc_worklist_create(tc);
 
-    /* Initialize work passing data structure. */
-    WorkToPass wtp;
-    wtp.num_target_threads = 0;
-    wtp.target_work = NULL;
-
     /* If we're starting a run (as opposed to just coming back here to do a
      * little more work we got after we first thought we were done...) */
     if (what_to_do != MVMGCWhatToDo_InTray) {
@@ -64,24 +59,24 @@ void MVM_gc_collect(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
         tc->nursery_alloc       = tospace;
         tc->nursery_alloc_limit = (char *)tc->nursery_alloc + MVM_NURSERY_SIZE;
 
-        do_worklist(tc, worklist, wtp, gen,
+        do_worklist(tc, worklist, gen,
             MVM_gc_worklist_add, "thread_obj", &tc->thread_obj);
 
         /* Add permanent roots and process them; only one thread will do
         * this, since they are instance-wide. */
         if (what_to_do != MVMGCWhatToDo_NoInstance) {
-            do_worklist(tc, worklist, wtp, gen,
+            do_worklist(tc, worklist, gen,
                 MVM_gc_root_add_permanents_to_worklist, "instance permanents");
-            do_worklist(tc, worklist, wtp, gen,
+            do_worklist(tc, worklist, gen,
                 MVM_gc_root_add_instance_roots_to_worklist, "instance roots");
         }
 
         /* Add per-thread state to worklist and process it. */
-        do_worklist(tc, worklist, wtp, gen,
+        do_worklist(tc, worklist, gen,
             MVM_gc_root_add_tc_roots_to_worklist, "TC objects");
 
         /* Add temporary roots and process them (these are per-thread). */
-        do_worklist(tc, worklist, wtp, gen,
+        do_worklist(tc, worklist, gen,
             MVM_gc_root_add_temps_to_worklist, "thread temps");
 
         /* Add things that are roots for the first generation because they are
@@ -90,16 +85,16 @@ void MVM_gc_collect(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
         * collection anyway (in fact, we must not for correctness, otherwise
         * the gen2 rooting keeps them alive forever). */
         if (gen == MVMGCGenerations_Nursery)
-            do_worklist(tc, worklist, wtp, gen,
+            do_worklist(tc, worklist, gen,
                 MVM_gc_root_add_gen2s_to_worklist, "gen2");
 
         /* Find roots in frames and process them. */
         if (tc->cur_frame)
-            do_worklist(tc, worklist, wtp, gen,
+            do_worklist(tc, worklist, gen,
                 MVM_gc_worklist_add_frame, "cur_frame", tc->cur_frame);
 
         /* Process anything in the in-tray. */
-        do_worklist(tc, worklist, wtp, gen,
+        do_worklist(tc, worklist, gen,
             add_in_tray_to_worklist, "in tray");
 
         /* At this point, we have probably done most of the work we will
@@ -110,7 +105,7 @@ void MVM_gc_collect(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
     }
     else {
         /* We just need to process anything in the in-tray. */
-        do_worklist(tc, worklist, wtp, gen,
+        do_worklist(tc, worklist, gen,
             add_in_tray_to_worklist, "in tray");
     }
 
@@ -119,14 +114,11 @@ void MVM_gc_collect(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
 
     /* Pass any work for other threads we accumulated but that didn't trigger
      * the work passing threshold, then cleanup work passing list. */
-    if (wtp.num_target_threads) {
-        pass_leftover_work(tc, &wtp);
-        free(wtp.target_work);
-    }
+    pass_leftover_work(tc);
 }
 
 /* Processes the current worklist. */
-static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, WorkToPass *wtp, MVMuint8 gen) {
+static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMuint8 gen) {
     MVMGen2Allocator  *gen2;
     MVMCollectable   **item_ptr;
     MVMCollectable    *new_addr;
@@ -161,10 +153,14 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
         if (item->forwarder) {
             if (MVM_GC_DEBUG_ENABLED(MVM_GC_DEBUG_COLLECT)) {
                 if (*item_ptr != item->forwarder) {
-                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "updating handle %p from %p to forwarder %p\n", item_ptr, item, item->forwarder);
+                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                        "updating handle %p from %p to forwarder %p\n",
+                        item_ptr, item, item->forwarder);
                 }
                 else {
-                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "already visited handle %p to forwarder %p\n", item_ptr, item->forwarder);
+                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                        "already visited handle %p to forwarder %p\n",
+                        item_ptr, item->forwarder);
                 }
             }
             *item_ptr = item->forwarder;
@@ -173,14 +169,17 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
 
         /* If the pointer is already into tospace, we already updated it,
          * so we're done. */
-        if (item >= (MVMCollectable *)tc->nursery_tospace && item < (MVMCollectable *)tc->nursery_alloc_limit)
+        if (item >= (MVMCollectable *)tc->nursery_tospace
+                && item < (MVMCollectable *)tc->nursery_alloc_limit)
             continue;
 
         /* If it's owned by a different thread, we need to pass it over to
          * the owning thread. */
         if (item->manager != tc) {
-            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "sending a handle %p to object %p to thread %d\n", item_ptr, item, item->manager->thread_id);
-            pass_work_item(tc, wtp, item_ptr);
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                "sending a handle %p to object %p to thread %d\n",
+                item_ptr, item, item->manager->thread_id);
+            pass_work_item(tc, item_ptr);
             continue;
         }
 
@@ -193,17 +192,21 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
             new_addr = item;
             if (MVM_GC_DEBUG_ENABLED(MVM_GC_DEBUG_COLLECT)) {
                 if (new_addr != item) {
-                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "updating handle %p from referent %p to %p\n", item_ptr, item, new_addr);
+                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                        "updating handle %p from referent %p to %p\n",
+                        item_ptr, item, new_addr);
                 }
                 else {
-                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "handle %p was already %p\n", item_ptr, new_addr);
+                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                        "handle %p was already %p\n", item_ptr, new_addr);
                 }
             }
             *item_ptr = item->forwarder = new_addr;
         } else {
             /* Catch NULL stable (always sign of trouble) in debug mode. */
             if (MVM_GC_DEBUG_ENABLED(MVM_GC_DEBUG_COLLECT) && !STABLE(item)) {
-                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "found a zeroed handle %p to object %p\n", item_ptr, item);
+                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                    "found a zeroed handle %p to object %p\n", item_ptr, item);
                 MVM_panic(1, "panic");
             }
 
@@ -215,7 +218,8 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
 
                 /* Copy the object to the second generation and mark it as
                  * living there. */
-                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "copying an object %p of size %d to gen2 %p\n",
+                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                    "copying an object %p of size %d to gen2 %p\n",
                     item, item->size, new_addr);
                 memcpy(new_addr, item, item->size);
                 new_addr->flags ^= MVM_CF_NURSERY_SEEN;
@@ -239,7 +243,8 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
                  * iteration. Allocate space in the nursery. */
                 new_addr = (MVMCollectable *)tc->nursery_alloc;
                 tc->nursery_alloc = (char *)tc->nursery_alloc + item->size;
-                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "copying an object %p of size %d to tospace %p\n",
+                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                    "copying an object %p of size %d to tospace %p\n",
                     item, item->size, new_addr);
 
                 /* Copy the object to tospace and mark it as seen in the
@@ -252,7 +257,9 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
             /* Store the forwarding pointer and update the original
              * reference. */
             if (MVM_GC_DEBUG_ENABLED(MVM_GC_DEBUG_COLLECT) && new_addr != item) {
-                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "updating handle %p from referent %p to %p\n", item_ptr, item, new_addr);
+                GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                    "updating handle %p from referent %p to %p\n",
+                    item_ptr, item, new_addr);
             }
             *item_ptr = item->forwarder = new_addr;
         }
@@ -303,9 +310,11 @@ void MVM_gc_mark_collectable(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMC
          * of the object *after* copying it since those are the addresses
          * we care about updating; the old chunk of memory is now dead! */
         if (MVM_GC_DEBUG_ENABLED(MVM_GC_DEBUG_COLLECT) && !STABLE(new_addr_obj))
-            MVM_panic(MVM_exitcode_gcnursery, "Found an outdated reference to address %p", new_addr);
+            MVM_panic(MVM_exitcode_gcnursery,
+                "Found an outdated reference to address %p", new_addr);
         if (REPR(new_addr_obj)->gc_mark)
-            REPR(new_addr_obj)->gc_mark(tc, STABLE(new_addr_obj), OBJECT_BODY(new_addr_obj), worklist);
+            REPR(new_addr_obj)->gc_mark(tc, STABLE(new_addr_obj),
+                OBJECT_BODY(new_addr_obj), worklist);
     }
     else if (new_addr->flags & MVM_CF_TYPE_OBJECT) {
         /* Add the STable to the worklist. */
@@ -321,9 +330,8 @@ void MVM_gc_mark_collectable(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMC
             MVM_gc_worklist_add(tc, worklist, &new_addr_st->vtable[i]);
         for (i = 0; i < new_addr_st->type_check_cache_length; i++)
             MVM_gc_worklist_add(tc, worklist, &new_addr_st->type_check_cache[i]);
-        if (new_addr_st->container_spec) {
+        if (new_addr_st->container_spec)
             new_addr_st->container_spec->gc_mark_data(tc, new_addr_st, worklist);
-        }
         if (new_addr_st->boolification_spec)
             MVM_gc_worklist_add(tc, worklist, &new_addr_st->boolification_spec->method);
         if (new_addr_st->invocation_spec) {
@@ -338,7 +346,8 @@ void MVM_gc_mark_collectable(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMC
             new_addr_st->REPR->gc_mark_repr_data(tc, new_addr_st, worklist);
     }
     else {
-        MVM_panic(MVM_exitcode_gcnursery, "Internal error: impossible case encountered in GC marking");
+        MVM_panic(MVM_exitcode_gcnursery,
+            "Internal error: impossible case encountered in GC marking");
     }
 }
 
@@ -362,7 +371,8 @@ static void push_work_to_thread_in_tray(MVMThreadContext *tc, MVMThreadContext *
             }
         } while ((t = t->body.next));
         if (!target_tc)
-            MVM_panic(MVM_exitcode_gcnursery, "Internal error: invalid thread ID in GC work pass");
+            MVM_panic(MVM_exitcode_gcnursery,
+                "Internal error: invalid thread ID in GC work pass");
     }
 
     /* push to sent_items list */
@@ -393,38 +403,34 @@ static void push_work_to_thread_in_tray(MVMThreadContext *tc, MVMThreadContext *
 
 /* Adds work to list of items to pass over to another thread, and if we
  * reach the pass threshold then does the passing. */
-static void pass_work_item(MVMThreadContext *tc, WorkToPass *wtp, MVMCollectable **item_ptr) {
-    ThreadWork *target_info = NULL;
-    MVMuint32   target      = (*item_ptr)->manager->gc_thread_id;
-    MVMuint32   j;
+static void pass_work_item(MVMThreadContext *tc, MVMCollectable **item_ptr) {
     MVMInstance *i          = tc->instance;
+    AO_t target_id = MVM_load(&(*item_ptr)->manager->gc_thread_id);
+    MVMGCPassedWork *wtp = NULL;
 
     /* Find any existing thread work passing list for the target. */
-    for (j = 0; j < wtp->num_target_threads; j++) {
-        if (wtp->target_work[j].target == target) {
-            target_info = &wtp->target_work[j];
-            break;
-        }
+    if (!tc->wtp) {
+        MVMuint32 count = tc->instance->gc_thread_id > 16
+            ? tc->instance->gc_thread_id : 16;
+        tc->wtp = calloc(count, sizeof(MVMGCPassedWork *));
+        tc->wtp_size = count;
+    }
+    else if (tc->wtp_size < tc->instance->gc_thread_id) {
+        MVMuint32 orig_size = tc->wtp_size;
+        do {
+            tc->wtp_size *= 2;
+        } while (tc->wtp_size < tc->instance->gc_thread_id);
+        tc->wtp = realloc(tc->wtp, tc->wtp_size * sizeof(MVMGCPassedWork *));
+        memset(tc->wtp + orig_size, 0,
+            (tc->wtp_size - orig_size) * sizeof(MVMGCPassedWork *));
     }
 
     /* If there's no entry for this target, create one. */
-    if (target_info == NULL) {
-        wtp->num_target_threads++;
-        wtp->target_work = realloc(wtp->target_work,
-            wtp->num_target_threads * sizeof(ThreadWork));
-        target_info = &wtp->target_work[wtp->num_target_threads - 1];
-        target_info->target = target;
-        target_info->work   = NULL;
-    }
-
-    /* See if there's a currently active list; create it if not. */
-    if (!target_info->work) {
-        target_info->work = calloc(sizeof(MVMGCPassedWork), 1);
-    }
+    if ((wtp = tc->wtp[target_id]) == NULL)
+        tc->wtp[target_id] = MVM_gc_worklist_create(tc);
 
     /* Add this item to the work list. */
-    target_info->work->items[target_info->work->num_items] = item_ptr;
-    target_info->work->num_items++;
+    MVM_gc_worklist_add_slow(tc, &wtp->worklist, item_ptr);
 
     /* If we've hit the limit, pass this work to the target thread. */
     if (target_info->work->num_items == MVM_GC_PASS_WORK_SIZE) {
@@ -434,10 +440,10 @@ static void pass_work_item(MVMThreadContext *tc, WorkToPass *wtp, MVMCollectable
 }
 
 /* Passes all work for other threads that we've got left in our to-pass list. */
-static void pass_leftover_work(MVMThreadContext *tc, WorkToPass *wtp) {
+static void pass_leftover_work(MVMThreadContext *tc) {
     MVMuint32 j;
-    for (j = 0; j < wtp->num_target_threads; j++)
-        if (wtp->target_work[j].work)
+    for (j = 0; j < tc->instance->gc_thread_id; j++)
+        if (tc->gc_wtp[j])
             push_work_to_thread_in_tray(tc, wtp->target_work[j].target,
                 wtp->target_work[j].work);
 }
@@ -467,7 +473,8 @@ static void add_in_tray_to_worklist(MVMThreadContext *tc, MVMGCWorklist *worklis
 
         /* Signal that we've consumed it; the sender will destroy it. */
         head_worklist->items = 0;
-        GCDEBUG_LOG(tc, MVM_GC_DEBUG_PASSEDWORK, "completed work item %p\n", head);
+        GCDEBUG_LOG(tc, MVM_GC_DEBUG_PASSEDWORK,
+            "completed work item %p\n", head);
         head = next;
     }
 }
@@ -501,7 +508,9 @@ void MVM_gc_collect_free_nursery_uncopied(MVMThreadContext *tc, void *limit) {
             /* Object instance. If dead, call gc_free if needed. Scan is
              * incremented by object size. */
             MVMObject *obj = (MVMObject *)item;
-            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "collecting an object %d in the nursery with reprid %d\n", item, REPR(obj)->ID);
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                "collecting an object %d in the nursery with reprid %d\n",
+                item, REPR(obj)->ID);
             if (dead && REPR(obj)->gc_free)
                 REPR(obj)->gc_free(tc, obj);
         }
@@ -511,13 +520,15 @@ void MVM_gc_collect_free_nursery_uncopied(MVMThreadContext *tc, void *limit) {
         else if (item->flags & MVM_CF_STABLE) {
             MVMSTable *st = (MVMSTable *)item;
             if (dead) {
-/*            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "enqueuing an STable %d in the nursery to be freed\n", item);*/
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                "enqueuing an STable %d in the nursery to be freed\n", item);
                 MVM_gc_collect_enqueue_stable_for_deletion(tc, st);
             }
         }
         else {
             printf("item flags: %d\n", item->flags);
-            MVM_panic(MVM_exitcode_gcnursery, "Internal error: impossible case encountered in GC free");
+            MVM_panic(MVM_exitcode_gcnursery,
+                "Internal error: impossible case encountered in GC free");
         }
         
         /* Go to the next item. */
@@ -596,7 +607,8 @@ void MVM_gc_collect_free_gen2_unmarked(MVMThreadContext *tc) {
                     col->forwarder = NULL;
                 }
                 else {
-                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, "collecting an object %p in the gen2\n", col);
+                    GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT,
+                        "collecting an object %p in the gen2\n", col);
                     /* No, it's dead. Do any cleanup. */
                     if (!(col->flags & (MVM_CF_TYPE_OBJECT | MVM_CF_STABLE))) {
                         /* Object instance; call gc_free if needed. */
@@ -616,9 +628,11 @@ void MVM_gc_collect_free_gen2_unmarked(MVMThreadContext *tc) {
                             if (MVM_load(&tc->gc_status) == MVMGCStatus_NONE) {
                                 /* We're in global destruction, so enqueue to the end
                                  * like we do in the nursery */
-                                MVM_gc_collect_enqueue_stable_for_deletion(tc, (MVMSTable *)col);
+                                MVM_gc_collect_enqueue_stable_for_deletion(tc,
+                                    (MVMSTable *)col);
                             } else {
-                                /* There will definitely be another gc run, so mark it as "died last time". */
+                                /* There will definitely be another gc run,
+                                 * so mark it as "died last time". */
                                 col->sc = (MVMSerializationContext *)1;
                             }
                             /* Skip the freelist updating. */
@@ -627,7 +641,9 @@ void MVM_gc_collect_free_gen2_unmarked(MVMThreadContext *tc) {
                     }
                     else {
                         printf("item flags: %d\n", col->flags);
-                        MVM_panic(MVM_exitcode_gcnursery, "Internal error: impossible case encountered in gen2 GC free");
+                        MVM_panic(MVM_exitcode_gcnursery,
+                            "Internal error: impossible case encountered"
+                            "in gen2 GC free");
                     }
 
                     /* Chain in to the free list. */
