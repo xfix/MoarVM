@@ -4,10 +4,14 @@
     MVM_store(&(thread)->gc_thread_id, MVM_incr(&(thread)->instance->gc_thread_id) + 1)
 
 /* This public-domain C quick sort implementation by Darel Rex Finley. */
-/* for example, quicksort_maker(MVMint64, elements,
- *     L, arr[L], arr[L], R, arr[R], arr[R], 100); */
-#define quicksort_maker(elem_type, elements, L, L_expr, L_lvalue, R, R_expr, R_lvalue, max_levels) do { \
-    elem_type piv; \
+/* for example, quicksort_maker(elements, 100, MVMint64, arr[L], arr[R],
+ * MVMint64, arr[L], arr[R]); elem_type is the type of each element.
+ * comparison_type is the type of the comparison value. */
+#define quicksort_maker(elements, max_levels, \
+        comparison_type, L_expr, R_expr, \
+        elem_type, L_lvalue, R_lvalue) do { \
+    elem_type piv_element; \
+    comparison_type piv_value; \
     MVMint64 beg[max_levels], end[max_levels], i = 0, L, R ; \
     beg[0] = 0; \
     end[0] = elements; \
@@ -15,24 +19,25 @@
         L = beg[i]; \
         R = end[i] - 1; \
         if (L < R) { \
-            piv = L_expr; \
+            piv_element = L_lvalue; \
+            piv_value = L_expr; \
             if (i == max_levels - 1) \
                 MVM_exception_throw_adhoc(tc, "quicksort overflow"); \
             while (L < R) { \
-                while (R_expr >= piv && L < R) \
+                while (R_expr >= piv_value && L < R) \
                     R--; \
                 if (L < R) { \
-                    L_expr = R_expr; \
+                    L_lvalue = R_lvalue; \
                     L++; \
                 } \
-                while (L_expr <= piv && L < R) \
+                while (L_expr <= piv_value && L < R) \
                     L++; \
                 if (L < R) { \
-                    R_expr = L_expr; \
+                    R_lvalue = L_lvalue; \
                     R--; \
                 } \
             } \
-            L_expr = piv; \
+            L_lvalue = piv_element; \
             beg[i+1] = L + 1; \
             end[i+1] = end[i]; \
             end[i++] = L; \
@@ -132,9 +137,9 @@ static void process_passed_work(MVMThreadContext *tc, MVMGCPassedWork *head,
 
     mainlist = &head->worklist;
 
-    quicksort_maker(MVMThreadContext *, mainlist->items,
-        L, (*mainlist->list[L])->manager, mainlist->list[L],
-        R, (*mainlist->list[R])->manager, list[R], 100);
+    quicksort_maker(mainlist->items, 100, MVMThreadContext *,
+        (*mainlist->list[L])->manager, (*mainlist->list[R])->manager,
+        MVMCollectable **, mainlist->list[L], mainlist->list[R]);
 
     /* make a worklist if we didn't already */
     if (!worklist)
