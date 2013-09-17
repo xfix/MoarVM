@@ -5,22 +5,20 @@
     func(tc, worklist, __VA_ARGS__); \
     GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, \
         "processing %d items from " name "\n", worklist->items); \
-    process_worklist(tc, worklist, gen); \
+    MVM_gc_process_worklist(tc, worklist, gen); \
 } while (0)
 #else
 #define do_worklist(tc, worklist, gen, func, name, ...) do { \
     func(tc, worklist , ##__VA_ARGS__); \
     GCDEBUG_LOG(tc, MVM_GC_DEBUG_COLLECT, \
         "processing %d items from " name "\n", worklist->items); \
-    process_worklist(tc, worklist, gen); \
+    MVM_gc_process_worklist(tc, worklist, gen); \
 } while (0)
 #endif
 
 /* Forward decls. */
-static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMuint8 gen);
 static void pass_work_item(MVMThreadContext *tc, MVMCollectable **item_ptr);
 static void pass_leftover_work(MVMThreadContext *tc);
-static void add_in_tray_to_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist);
 
 /* Does a garbage collection run. Exactly what it does is configured by the
  * couple of arguments that it takes.
@@ -46,68 +44,55 @@ void MVM_gc_collect(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
     /* Create a GC worklist. */
     MVMGCWorklist *worklist = MVM_gc_worklist_create(tc);
 
-    /* If we're starting a run (as opposed to just coming back here to do a
-     * little more work we got after we first thought we were done...) */
-    if (what_to_do != MVMGCWhatToDo_InTray) {
-        /* Swap fromspace and tospace. */
-        void * fromspace = tc->nursery_tospace;
-        void * tospace   = tc->nursery_fromspace;
-        tc->nursery_fromspace = fromspace;
-        tc->nursery_tospace   = tospace;
+    /* Swap fromspace and tospace. */
+    void * fromspace = tc->nursery_tospace;
+    void * tospace   = tc->nursery_fromspace;
+    tc->nursery_fromspace = fromspace;
+    tc->nursery_tospace   = tospace;
 
-        /* Reset nursery allocation pointers to the new tospace. */
-        tc->nursery_alloc       = tospace;
-        tc->nursery_alloc_limit = (char *)tc->nursery_alloc + MVM_NURSERY_SIZE;
+    /* Reset nursery allocation pointers to the new tospace. */
+    tc->nursery_alloc       = tospace;
+    tc->nursery_alloc_limit = (char *)tc->nursery_alloc + MVM_NURSERY_SIZE;
 
+    do_worklist(tc, worklist, gen,
+        MVM_gc_worklist_add, "thread_obj", &tc->thread_obj);
+
+    /* Add permanent roots and process them; only one thread will do
+    * this, since they are instance-wide. */
+    if (what_to_do != MVMGCWhatToDo_NoInstance) {
         do_worklist(tc, worklist, gen,
-            MVM_gc_worklist_add, "thread_obj", &tc->thread_obj);
-
-        /* Add permanent roots and process them; only one thread will do
-        * this, since they are instance-wide. */
-        if (what_to_do != MVMGCWhatToDo_NoInstance) {
-            do_worklist(tc, worklist, gen,
-                MVM_gc_root_add_permanents_to_worklist, "instance permanents");
-            do_worklist(tc, worklist, gen,
-                MVM_gc_root_add_instance_roots_to_worklist, "instance roots");
-        }
-
-        /* Add per-thread state to worklist and process it. */
+            MVM_gc_root_add_permanents_to_worklist, "instance permanents");
         do_worklist(tc, worklist, gen,
-            MVM_gc_root_add_tc_roots_to_worklist, "TC objects");
-
-        /* Add temporary roots and process them (these are per-thread). */
-        do_worklist(tc, worklist, gen,
-            MVM_gc_root_add_temps_to_worklist, "thread temps");
-
-        /* Add things that are roots for the first generation because they are
-        * pointed to by objects in the second generation and process them
-        * (also per-thread). Note we need not do this if we're doing a full
-        * collection anyway (in fact, we must not for correctness, otherwise
-        * the gen2 rooting keeps them alive forever). */
-        if (gen == MVMGCGenerations_Nursery)
-            do_worklist(tc, worklist, gen,
-                MVM_gc_root_add_gen2s_to_worklist, "gen2");
-
-        /* Find roots in frames and process them. */
-        if (tc->cur_frame)
-            do_worklist(tc, worklist, gen,
-                MVM_gc_worklist_add_frame, "cur_frame", tc->cur_frame);
-
-        /* Process anything in the in-tray. */
-        do_worklist(tc, worklist, gen,
-            add_in_tray_to_worklist, "in tray");
-
-        /* At this point, we have probably done most of the work we will
-         * need to (only get more if another thread passes us more); zero
-         * out the remaining tospace. */
-        memset(tc->nursery_alloc, 0,
-            (char *)tc->nursery_alloc_limit - (char *)tc->nursery_alloc);
+            MVM_gc_root_add_instance_roots_to_worklist, "instance roots");
     }
-    else {
-        /* We just need to process anything in the in-tray. */
+
+    /* Add per-thread state to worklist and process it. */
+    do_worklist(tc, worklist, gen,
+        MVM_gc_root_add_tc_roots_to_worklist, "TC objects");
+
+    /* Add temporary roots and process them (these are per-thread). */
+    do_worklist(tc, worklist, gen,
+        MVM_gc_root_add_temps_to_worklist, "thread temps");
+
+    /* Add things that are roots for the first generation because they are
+    * pointed to by objects in the second generation and process them
+    * (also per-thread). Note we need not do this if we're doing a full
+    * collection anyway (in fact, we must not for correctness, otherwise
+    * the gen2 rooting keeps them alive forever). */
+    if (gen == MVMGCGenerations_Nursery)
         do_worklist(tc, worklist, gen,
-            add_in_tray_to_worklist, "in tray");
-    }
+            MVM_gc_root_add_gen2s_to_worklist, "gen2");
+
+    /* Find roots in frames and process them. */
+    if (tc->cur_frame)
+        do_worklist(tc, worklist, gen,
+            MVM_gc_worklist_add_frame, "cur_frame", tc->cur_frame);
+
+    /* At this point, we have probably done most of the work we will
+     * need to (only get more if another thread passes us more); zero
+     * out the remaining tospace. */
+    memset(tc->nursery_alloc, 0,
+        (char *)tc->nursery_alloc_limit - (char *)tc->nursery_alloc);
 
     /* Destroy the worklist. */
     MVM_gc_worklist_destroy(tc, worklist);
@@ -118,7 +103,7 @@ void MVM_gc_collect(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
 }
 
 /* Processes the current worklist. */
-static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMuint8 gen) {
+void MVM_gc_process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMuint8 gen) {
     MVMGen2Allocator  *gen2;
     MVMCollectable   **item_ptr;
     MVMCollectable    *new_addr;
@@ -354,29 +339,26 @@ void MVM_gc_mark_collectable(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMC
 /* Adds a chunk of work to another thread's in-tray. */
 static void push_work_to_thread_in_tray(MVMThreadContext *tc, MVMThreadContext *target, MVMGCPassedWork *work) {
     MVMint32 j;
-    MVMGCPassedWork * volatile *target_tray;
+    MVMThreadContext *orig_tc = tc;
 
-    /* push to sent_items list */
-    if (tc->gc_sent_items) {
-        tc->gc_sent_items->next_by_sender = work;
-        work->last_by_sender = tc->gc_sent_items;
-    }
+    /* Become our owner again for a while... */
+    tc = tc->gc_owner_tc;
+
     /* queue it up to check if the check list isn't clear */
-    if (!MVM_load(&tc->gc_next_to_check)) {
-        MVM_store(&tc->gc_next_to_check, work);
+    if (!tc->gc_next_to_check) {
+        tc->gc_next_to_check = work;
     }
-    tc->gc_sent_items = work;
 
     /* Pass the work, chaining any other in-tray entries for the thread
      * after us. */
-    target_tray = &target->gc_in_tray;
     while (1) {
-        MVMGCPassedWork *orig = (MVMGCPassedWork *)MVM_load(target_tray);
-        work->next = orig;
-        if (MVM_casptr(target_tray, orig, work) == orig) {
-            GCDEBUG_LOG(tc, MVM_GC_DEBUG_PASSEDWORK,
-                "passed a work item %p to thread %d\n",
-                work, target->thread_id);
+        MVMGCPassedWork *orig = (MVMGCPassedWork *)MVM_load(&target->gc_in_tray);
+
+        MVM_store(&work->next, orig);
+        if (MVM_casptr(&target->gc_in_tray, orig, work) == orig) {
+            GCDEBUG_LOG(orig_tc, MVM_GC_DEBUG_PASSEDWORK,
+                "passed a work item %p to manager thread %d for thread %d\n",
+                work, target->thread_id, (*work->worklist.list[0])->manager->thread_id);
             return;
         }
     }
@@ -386,7 +368,8 @@ static void push_work_to_thread_in_tray(MVMThreadContext *tc, MVMThreadContext *
  * reach the pass threshold then does the passing. */
 static void pass_work_item(MVMThreadContext *tc, MVMCollectable **item_ptr) {
     MVMInstance *i          = tc->instance;
-    MVMThreadContext *target = MVM_load(&(*item_ptr)->manager->gc_owner_tc);
+    MVMThreadContext *target =
+        (MVMThreadContext *)MVM_load(&(*item_ptr)->manager->gc_owner_tc);
     MVMGCPassedWork *wtp = NULL;
 
     /* Find any existing thread work passing list for the target. */
@@ -424,41 +407,12 @@ static void pass_work_item(MVMThreadContext *tc, MVMCollectable **item_ptr) {
 static void pass_leftover_work(MVMThreadContext *tc) {
     MVMuint32 j;
     for (j = 0; j < tc->instance->gc_thread_id; j++)
-        if (tc->gc_wtp[j])
+        if (tc->gc_wtp && tc->gc_wtp[j]) {
             push_work_to_thread_in_tray(tc,
                 (MVMThreadContext *)MVM_load(&(*tc->gc_wtp[j]->worklist.list[0])->manager->gc_owner_tc),
                 tc->gc_wtp[j]);
-}
-
-/* Takes work in a thread's in-tray, if any, and adds it to the worklist. */
-static void add_in_tray_to_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist) {
-    MVMGCPassedWork * volatile *in_tray = &tc->gc_in_tray;
-    MVMGCPassedWork *head;
-
-    /* Get work to process. */
-    while (1) {
-        /* See if there's anything in the in-tray; if not, we're done. */
-        head = (MVMGCPassedWork *)MVM_load(in_tray);
-        if (head == NULL)
-            return;
-
-        /* Otherwise, try to take it. */
-        if (MVM_casptr(in_tray, head, NULL) == head)
-            break;
-    }
-
-    /* Go through list, adding to worklist. */
-    while (head) {
-        MVMGCPassedWork *next = (MVMGCPassedWork *)MVM_load(&head->next);
-        MVMGCWorklist *head_worklist = (MVMGCWorklist *)head;
-        MVM_gc_worklist_copy_items_to(tc, head_worklist, worklist);
-
-        /* Signal that we've consumed it; the sender will destroy it. */
-        head_worklist->items = 0;
-        GCDEBUG_LOG(tc, MVM_GC_DEBUG_PASSEDWORK,
-            "completed work item %p\n", head);
-        head = next;
-    }
+            tc->gc_wtp[j] = NULL;
+        }
 }
 
 /* Save dead STable pointers to delete later.. */
@@ -645,7 +599,8 @@ void MVM_gc_collect_free_gen2_unmarked(MVMThreadContext *tc) {
 
 /* Allocates a new GC work to pass item. */
 MVMGCPassedWork * MVM_gc_wtp_create(MVMThreadContext *tc) {
-    MVMGCPassedWork *wtp = malloc(sizeof(MVMGCPassedWork));
+    MVMGCPassedWork *wtp = calloc(1, sizeof(MVMGCPassedWork));
     MVM_gc_worklist_init(tc, (MVMGCWorklist *)wtp);
+    MVM_store(&wtp->next, NULL);
     return wtp;
 }

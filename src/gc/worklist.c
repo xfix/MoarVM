@@ -60,13 +60,13 @@ void MVM_gc_worklist_mark_frame_roots(MVMThreadContext *tc, MVMGCWorklist *workl
 }
 
 /* Append contents of one worklist to another (ignores frames for now). */
-void MVM_gc_worklist_copy_items_to(MVMThreadContext *tc, MVMGCWorklist *source, MVMGCWorklist *dest) {
-    MVMuint32 total_items = source->items + dest->items;
+void MVM_gc_worklist_copy_items_to(MVMThreadContext *tc, MVMGCWorklist *source, MVMGCWorklist *dest, MVMuint32 start) {
+    MVMuint32 total_items = source->items - start + dest->items;
 
     if (total_items > dest->alloc) {
         do { dest->alloc *= 2; } while (total_items > dest->alloc);
         dest->list = realloc(dest->list, dest->alloc * sizeof(MVMCollectable **));
     }
-    memcpy(dest->list + dest->items, source->list, source->items * sizeof(MVMCollectable **));
+    memcpy(dest->list + dest->items, source->list + start, (source->items - start) * sizeof(MVMCollectable **));
     dest->items = total_items;
 }

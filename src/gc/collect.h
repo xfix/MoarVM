@@ -50,3 +50,4 @@ void MVM_gc_collect_free_gen2_unmarked(MVMThreadContext *tc);
 void MVM_gc_mark_collectable(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMCollectable *item);
 void MVM_gc_collect_free_stables(MVMThreadContext *tc);
 MVMGCPassedWork * MVM_gc_wtp_create(MVMThreadContext *tc);
+void MVM_gc_process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMuint8 gen);

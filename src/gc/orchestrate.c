@@ -31,6 +31,9 @@ static MVMuint32 signal_one_thread(MVMThreadContext *tc, MVMThreadContext *to_si
             add_work(tc, to_signal);
             return 0;
         }
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE,
+                "didn't steal the gc work of thread %d because its gc_status was %d\n",
+                to_signal->thread_id, gc_status);
         if (gc_status == MVMGCStatus_STOLEN
                 || gc_status == MVMGCStatus_INTERRUPT)
             return 0;
@@ -82,7 +85,7 @@ void MVM_gc_enter_from_allocator(MVMThreadContext *tc) {
     GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE, "Entered from allocator\n");
 
     /* Try to start the GC run. */
-    if (MVM_cas(&tc->instance->gc_start, 0, 1) == 0) {
+    if (MVM_incr(&tc->instance->gc_start) == 0) {
         MVMThread *thread_obj = (MVMThread *)MVM_load(&tc->instance->threads);
 
         /* We are the winner of the GC starting race. This gives us some
@@ -96,6 +99,10 @@ void MVM_gc_enter_from_allocator(MVMThreadContext *tc) {
          * the last GC run. */
         while (MVM_load(&tc->instance->gc_ack))
             MVM_platform_yield();
+        /* Add an extra for the stable free step. */
+        MVM_incr(&tc->instance->gc_ack);
+
+        MVM_gc_register_for_gc_run(tc);
 
         /* Iterate the linked list of thread objects.  Even though we're racing
          * other threads who create new child threads, it's okay because those
@@ -104,8 +111,15 @@ void MVM_gc_enter_from_allocator(MVMThreadContext *tc) {
         do {
             if (tc == thread_obj->body.tc) continue;
             MVM_incr(&tc->instance->gc_start);
-            if (!signal_one_thread(tc, thread_obj->body.tc))
-                MVM_decr(&tc->instance->gc_start);
+            if (!signal_one_thread(tc, thread_obj->body.tc)) {
+                tmp0 = MVM_decr(&tc->instance->gc_start);
+                GCDEBUG_LOG(tc, MVM_GC_DEBUG_GCSTART,
+                    "decr gc_start to %d\n", tmp0 - 1);
+            }
+            else {
+                GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE,
+                    "interrupted thread %d\n", thread_obj->body.tc->thread_id);
+            }
         } while ((thread_obj = thread_obj->body.next));
         MVM_gc_run_gc(tc, MVMGCWhatToDo_All);
     }
@@ -116,9 +130,18 @@ void MVM_gc_enter_from_allocator(MVMThreadContext *tc) {
 
         /* Need to increment gc_start iff we're able to interrupt ourself,
          * since we need to simulate those conditions thoroughly. */
-        MVM_incr(&tc->instance->gc_start);
-        if (!MVM_try_interrupt(tc, tc, tmp0))
-            MVM_decr(&tc->instance->gc_start);
+        if (!MVM_try_interrupt(tc, tc, tmp0)) {
+            tmp0 = MVM_decr(&tc->instance->gc_start);
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_GCSTART,
+                "Couldn't interrupt ourself, so decremented gc_start to %d\n",
+                tmp0 - 1);
+        }
+        else {
+            GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE,
+                "Interrupted ourself\n");
+        }
+
+        MVM_gc_register_for_gc_run(tc);
         MVM_gc_run_gc(tc, MVMGCWhatToDo_NoInstance);
     }
 }
@@ -128,6 +151,7 @@ void MVM_gc_enter_from_allocator(MVMThreadContext *tc) {
  * try and do that, just enlist in the run. */
 void MVM_gc_enter_from_interrupt(MVMThreadContext *tc) {
     GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE, "Entered from interrupt\n");
+    MVM_gc_register_for_gc_run(tc);
     MVM_gc_run_gc(tc, MVMGCWhatToDo_NoInstance);
 }
 

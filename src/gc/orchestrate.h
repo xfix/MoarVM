@@ -46,7 +46,12 @@ typedef enum {
  * complicated. */
 #define MVM_GC_DEBUG_LOG_FLAGS \
     ( MVM_GC_DEBUG_ORCHESTRATE \
-    | MVM_GC_DEBUG_PASSEDWORK)
+    | MVM_GC_DEBUG_GCSTART )
+/*    | MVM_GC_DEBUG_PASSEDWORK \
+    | MVM_GC_DEBUG_COLLECT \
+    | MVM_GC_DEBUG_GEN2 \
+    | MVM_GC_DEBUG_GCSTART \
+    )*/
 
 #define MVM_GC_DEBUG_ENABLED(flags) \
     ((MVM_GC_DEBUG_LOG_FLAGS) & (flags))
