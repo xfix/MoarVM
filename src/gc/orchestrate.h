@@ -44,10 +44,9 @@ typedef enum {
 /* OR together the flags you want to require, or redefine
  * MVM_GC_DEBUG_ENABLED(flags) if you want something more
  * complicated. */
-#define MVM_GC_DEBUG_LOG_FLAGS \
-    ( MVM_GC_DEBUG_ORCHESTRATE \
-    | MVM_GC_DEBUG_GCSTART )
-/*    | MVM_GC_DEBUG_PASSEDWORK \
+#define MVM_GC_DEBUG_LOG_FLAGS 0
+/*  ( MVM_GC_DEBUG_ORCHESTRATE \
+    | MVM_GC_DEBUG_PASSEDWORK \
     | MVM_GC_DEBUG_COLLECT \
     | MVM_GC_DEBUG_GEN2 \
     | MVM_GC_DEBUG_GCSTART \

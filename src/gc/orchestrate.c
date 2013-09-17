@@ -109,7 +109,10 @@ void MVM_gc_enter_from_allocator(MVMThreadContext *tc) {
          * children will end up being interrupted or stolen also by their
          * parents, which we are guaranteed to know about here (recursively). */
         do {
-            if (tc == thread_obj->body.tc) continue;
+            MVMThreadContext *other;
+            if (!(other = thread_obj->body.tc) || tc == other
+                    || MVM_load(&thread_obj->body.stage) == MVM_thread_stage_destroyed)
+                continue;
             MVM_incr(&tc->instance->gc_start);
             if (!signal_one_thread(tc, thread_obj->body.tc)) {
                 tmp0 = MVM_decr(&tc->instance->gc_start);
