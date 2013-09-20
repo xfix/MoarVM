@@ -16,16 +16,14 @@ struct MVMThreadBody {
      * with the correct reference if the code object is moved. */
     MVMObject *invokee;
 
-    uv_thread_t thread;
+    /* libuv thread object */
+    uv_thread_t *thread;
 
     /* next in tc's threads list */
     MVMThread *next;
 
     /* MVMThreadStages */
     AO_t stage;
-
-    /* child currently spawning, so GC can steal it */
-    MVMThread *new_child;
 };
 struct MVMThread {
     MVMObject common;

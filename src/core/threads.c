@@ -59,14 +59,15 @@ static void start_thread(void *data) {
     /* Now we're done, decrement the reference count of the caller. */
     MVM_frame_dec_ref(tc, ts->caller);
 
+    /* hopefully pop the ts->thread_obj temp */
+    MVM_gc_root_temp_pop(tc);
+
     /* Mark ourselves as dying, so that another thread will take care
      * of GC-ing our objects and cleaning up our thread context. */
     MVM_gc_mark_thread_blocked(tc);
 
     GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE, "Thread %d XX(%d) : thread EXITING.\n");
 
-    /* hopefully pop the ts->thread_obj temp */
-    MVM_gc_root_temp_pop(tc);
     free(ts);
 
     /* Exit the thread, now it's completed. */
@@ -122,8 +123,8 @@ MVMObject * MVM_thread_start(MVMThreadContext *tc, MVMObject *invokee, MVMObject
             MVM_ASSIGN_REF(tc, child, child->body.next, curr);
         } while (MVM_casptr(threads, child->body.next, child) != child->body.next);
 
-
-        status = uv_thread_create(&child->body.thread, &start_thread, ts);
+        child->body.thread = calloc(1, sizeof(uv_thread_t));
+        status = uv_thread_create(child->body.thread, &start_thread, ts);
 
         if (status < 0) {
             MVM_panic(MVM_exitcode_compunit, "Could not spawn thread: errorcode %d", status);
@@ -140,52 +141,20 @@ MVMObject * MVM_thread_start(MVMThreadContext *tc, MVMObject *invokee, MVMObject
 void MVM_thread_join(MVMThreadContext *tc, MVMObject *thread_obj) {
     if (REPR(thread_obj)->ID == MVM_REPR_ID_MVMThread) {
         MVMThread *thread = (MVMThread *)thread_obj;
+        uv_thread_t *uv_thread = thread->body.thread;
         int status;
-        MVM_gc_root_temp_push(tc, (MVMCollectable **)&thread);
-        MVM_gc_mark_thread_blocked(tc);
         if (MVM_load(&((MVMThread *)thread_obj)->body.stage) < MVM_thread_stage_exited) {
-            status = uv_thread_join(&thread->body.thread);
+            MVM_gc_mark_thread_blocked(tc);
+            status = uv_thread_join(uv_thread);
+            MVM_gc_mark_thread_unblocked(tc);
+            if (status < 0)
+                MVM_panic(MVM_exitcode_compunit, "Could not join thread: errorcode %d", status);
         }
         else { /* the target already ended */
-            /* used to be APR_SUCCESS, but then we ditched APR */
-            status = 0;
         }
-        MVM_gc_mark_thread_unblocked(tc);
-        MVM_gc_root_temp_pop(tc);
-        if (status < 0)
-            MVM_panic(MVM_exitcode_compunit, "Could not join thread: errorcode %d", status);
     }
     else {
         MVM_exception_throw_adhoc(tc,
             "Thread handle passed to join must have representation MVMThread");
     }
-}
-
-void MVM_thread_cleanup_threads_list(MVMThreadContext *tc, MVMThread **head) {
-    /* Assumed to be the only thread accessing the list.
-     * must set next on every item. */
-    MVMThread *new_list = NULL, *this = *head, *next;
-    *head = NULL;
-    while (this) {
-        next = this->body.next;
-        switch (this->body.stage) {
-            case MVM_thread_stage_starting:
-            case MVM_thread_stage_waiting:
-            case MVM_thread_stage_started:
-            case MVM_thread_stage_exited:
-            case MVM_thread_stage_clearing_nursery:
-                /* push it to the new starting list */
-                this->body.next = new_list;
-                new_list = this;
-                break;
-            case MVM_thread_stage_destroyed:
-                /* don't put in a list */
-                this->body.next = NULL;
-                break;
-            default:
-                MVM_panic(MVM_exitcode_threads, "Thread in unknown stage: %d\n", this->body.stage);
-        }
-        this = next;
-    }
-    *head = new_list;
 }
