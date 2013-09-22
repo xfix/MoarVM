@@ -123,8 +123,7 @@ MVMObject * MVM_thread_start(MVMThreadContext *tc, MVMObject *invokee, MVMObject
             MVM_ASSIGN_REF(tc, child, child->body.next, curr);
         } while (MVM_casptr(threads, child->body.next, child) != child->body.next);
 
-        child->body.thread = calloc(1, sizeof(uv_thread_t));
-        status = uv_thread_create(child->body.thread, &start_thread, ts);
+        status = uv_thread_create(&child->body.thread, &start_thread, ts);
 
         if (status < 0) {
             MVM_panic(MVM_exitcode_compunit, "Could not spawn thread: errorcode %d", status);
@@ -141,7 +140,7 @@ MVMObject * MVM_thread_start(MVMThreadContext *tc, MVMObject *invokee, MVMObject
 void MVM_thread_join(MVMThreadContext *tc, MVMObject *thread_obj) {
     if (REPR(thread_obj)->ID == MVM_REPR_ID_MVMThread) {
         MVMThread *thread = (MVMThread *)thread_obj;
-        uv_thread_t *uv_thread = thread->body.thread;
+        uv_thread_t *uv_thread = &thread->body.thread;
         int status;
         if (MVM_load(&((MVMThread *)thread_obj)->body.stage) < MVM_thread_stage_exited) {
             MVM_gc_mark_thread_blocked(tc);

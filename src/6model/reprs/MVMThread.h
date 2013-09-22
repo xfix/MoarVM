@@ -17,7 +17,7 @@ struct MVMThreadBody {
     MVMObject *invokee;
 
     /* libuv thread object */
-    uv_thread_t *thread;
+    uv_thread_t thread;
 
     /* next in tc's threads list */
     MVMThread *next;

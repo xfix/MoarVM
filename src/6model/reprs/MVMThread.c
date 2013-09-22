@@ -42,7 +42,6 @@ static void gc_mark(MVMThreadContext *tc, MVMSTable *st, void *data, MVMGCWorkli
 static void gc_free(MVMThreadContext *tc, MVMObject *obj) {
     /* The ThreadContext has already been destroyed by the GC. */
     MVMThread *thread = (MVMThread *)obj;
-    MVM_checked_free_null(thread->body.thread);
     thread->body.invokee = NULL;
     thread->body.next = NULL;
 }
