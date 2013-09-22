@@ -140,11 +140,11 @@ MVMObject * MVM_thread_start(MVMThreadContext *tc, MVMObject *invokee, MVMObject
 void MVM_thread_join(MVMThreadContext *tc, MVMObject *thread_obj) {
     if (REPR(thread_obj)->ID == MVM_REPR_ID_MVMThread) {
         MVMThread *thread = (MVMThread *)thread_obj;
-        uv_thread_t *uv_thread = &thread->body.thread;
+        uv_thread_t uv_thread = thread->body.thread;
         int status;
         if (MVM_load(&((MVMThread *)thread_obj)->body.stage) < MVM_thread_stage_exited) {
             MVM_gc_mark_thread_blocked(tc);
-            status = uv_thread_join(uv_thread);
+            status = uv_thread_join(&uv_thread);
             MVM_gc_mark_thread_unblocked(tc);
             if (status < 0)
                 MVM_panic(MVM_exitcode_compunit, "Could not join thread: errorcode %d", status);
