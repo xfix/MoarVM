@@ -46,7 +46,7 @@ static void start_thread(void *data) {
 
     /* wait for the GC to finish if it's not finished stealing us. */
     MVM_gc_mark_thread_unblocked(tc);
-    tc->thread_obj->body.stage = MVM_thread_stage_started;
+    MVM_store(&tc->thread_obj->body.stage, MVM_thread_stage_started);
 
     /* Enter the interpreter, to run code. */
     MVM_interp_run(tc, &thread_initial_invoke, ts);

@@ -488,14 +488,14 @@ void MVM_gc_collect_cleanup_gen2roots(MVMThreadContext *tc) {
 
 /* Free STables (in any thread/generation!) queued to be freed. */
 void MVM_gc_collect_free_stables(MVMThreadContext *tc) {
-    MVMSTable *st = tc->instance->stables_to_free;
+    MVMSTable *st = (MVMSTable *)MVM_load(&tc->instance->stables_to_free);
     while (st) {
         MVMSTable *st_to_free = st;
         st = (MVMSTable *)st_to_free->header.forwarder;
         st_to_free->header.forwarder = NULL;
         MVM_6model_stable_gc_free(tc, st_to_free);
     }
-    tc->instance->stables_to_free = NULL;
+    MVM_store(&tc->instance->stables_to_free, NULL);
 }
 
 /* Goes through the unmarked objects in the second generation heap and builds

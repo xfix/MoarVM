@@ -1,8 +1,5 @@
 #include "moarvm.h"
 
-#define register_gc_run_thread_id(thread) \
-    MVM_store(&(thread)->gc_thread_id, MVM_incr(&(thread)->instance->gc_thread_id) + 1)
-
 /* This public-domain C quick sort implementation by Darel Rex Finley. */
 /* for example, quicksort_maker(elements, 100, MVMint64, arr[L], arr[R],
  * MVMint64, arr[L], arr[R]); elem_type is the type of each element.
@@ -47,53 +44,6 @@
         } \
     } \
 } while (0)
-
-/* Processes the gc_work queue, attempting to steal the children.  They are
- * guaranteed to exist because every thread lasts at least 1 GC run, and the
- * entry stays in this table no more than 1 GC run. */
-void MVM_gc_register_for_gc_run(MVMThreadContext *tc) {
-    MVMuint32 i, count = 0;
-    AO_t tmp0 = 0;
-
-    if (tc->gc_work == NULL) {
-        tc->gc_work_size = 16;
-        tc->gc_work = malloc(tc->gc_work_size * sizeof(MVMWorkThread));
-    }
-
-    for (i = 0; i < tc->gc_work_count; i++) {
-        MVMThreadContext *child = tc->gc_work[i].tc;
-
-        if (MVM_try_steal(tc, child, tmp0)) {
-            GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE,
-                "stole the gc work of child thread %d\n", child->thread_id);
-            /* We successfully stole the child; update its
-             * position in the work queue if necessary. */
-            tc->gc_work[count++].tc = child;
-            /* Mark it as such. */
-            MVM_store(&child->gc_owner_tc, tc);
-            /* Register its GC thread ID. */
-            register_gc_run_thread_id(child);
-        }
-    }
-    /* Erase any stray pointers. */
-    for (i = count; i < tc->gc_work_count; i++) {
-        tc->gc_work[i].tc = NULL;
-        tc->gc_work[i].limit = NULL;
-    }
-
-    /* Add ourself. Reset the count to how many we actually stole. */
-    tc->gc_work[count++].tc = tc;
-    /* Mark our ownership of ... ourself. */
-    MVM_store(&tc->gc_owner_tc, tc);
-    tc->gc_work_count = count;
-    /* Register for a GC thread ID. */
-    register_gc_run_thread_id(tc);
-
-    /* Increment the finish counter to signify we're registering in
-     * the GC run and for the other to wait for us to finish that
-     * phase. */
-    MVM_incr(&tc->instance->gc_finish);
-}
 
 /* Takes work in a thread's in-tray, if any, and adds it to the worklist. */
 static void add_in_tray_to_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist) {
@@ -258,8 +208,6 @@ static void do_collections(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 g
         MVMThreadContext *target = tc->gc_work[i].tc;
         GCDEBUG_LOG(target, MVM_GC_DEBUG_ORCHESTRATE, "starting collection\n");
 
-        reset_gc_status(target);
-
         /* Set limit for later collection. */
         tc->gc_work[i].limit = target->nursery_alloc;
 
@@ -352,6 +300,7 @@ static void post_run_frees_and_cleanups(MVMThreadContext *tc, void *limit, MVMui
     MVMThread *thread_obj = tc->thread_obj;
 
     MVM_gc_collect_free_nursery_uncopied(tc, limit);
+    reset_gc_status(tc);
 
     if (gen == MVMGCGenerations_Both) {
         GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE, "freeing gen2\n");
@@ -377,11 +326,6 @@ static void acknowledge_finish(MVMThreadContext *tc) {
      * except for STables, and if we're the final to do
      * so, free the STables, which have been linked. */
     if (MVM_decr(&tc->instance->gc_ack) == 2) {
-        /* Free any STables that have been marked for
-         * deletion. It's okay for us to muck around in
-         * another thread's fromspace while it's mutating
-         * tospace, really. */
-        MVM_gc_collect_free_stables(tc);
         MVM_store(&tc->instance->gc_thread_id, 0);
         MVM_decr(&tc->instance->gc_ack);
     }
@@ -400,6 +344,10 @@ void MVM_gc_run_gc(MVMThreadContext *tc, MVMuint8 what_to_do) {
     /* Wait for all threads to indicate readiness to collect. */
     while (MVM_load(&tc->instance->gc_start));
     MVM_incr(&tc->instance->gc_ack);
+
+    /* Add an extra for the stable free step. */
+    if (what_to_do == MVMGCWhatToDo_All)
+        MVM_incr(&tc->instance->gc_ack);
 
     gen = MVM_load(&tc->instance->gc_seq_number) % MVM_GC_GEN2_RATIO == 0
         ? MVMGCGenerations_Both
