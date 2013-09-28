@@ -227,20 +227,28 @@ void MVM_gc_enter_from_interrupt(MVMThreadContext *tc) {
     MVM_gc_run_gc(tc, MVMGCWhatToDo_NoInstance);
 }
 
+#define force_full_gc(tc) MVM_store(&(tc)->instance->gc_seq_number, MVM_GC_GEN2_RATIO - 1)
+
 /* Run the global destruction phase. */
 void MVM_gc_global_destruction(MVMThreadContext *tc) {
     char *nursery_tmp;
 
     /* Must wait until we're the only thread... */
-    while (tc->instance->num_user_threads) {
-        if (MVM_load(&tc->instance->gc_morgue_thread_count)) {
-            /* need to run the GC to clean up those threads. */
-            MVM_gc_enter_from_allocator(tc);
-        }
-        /* Now we need to join the GC run if some other thread
-         * has signaled us. */
-        GC_SYNC_POINT(tc);
-        MVM_platform_yield();
+    if (tc->instance->num_user_threads) {
+        do {
+            if (MVM_load(&tc->instance->gc_morgue_thread_count)) {
+                /* need to run the GC to clean up those threads. */
+                force_full_gc(tc);
+                MVM_gc_enter_from_allocator(tc);
+            }
+            /* Now we need to join the GC run if some other thread
+             * has signaled us. */
+            GC_SYNC_POINT(tc);
+            MVM_platform_yield();
+        } while (tc->instance->num_user_threads);
+        /* must run once again to actually destroy them... */
+        force_full_gc(tc);
+        MVM_gc_enter_from_allocator(tc);
     }
 
     /* Fake a nursery collection run by swapping the semi-
