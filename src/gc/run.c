@@ -212,7 +212,7 @@ static void do_collections(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 g
         tc->gc_work[i].limit = target->nursery_alloc;
 
         /* Call the collector. We may call it again later for this thread. */
-        MVM_gc_collect(target, (MVM_load(&target->gc_thread_id) != 0
+        MVM_gc_collect(target, (MVM_load(&target->gc_thread_id) == 0
             ? what_to_do : MVMGCWhatToDo_NoInstance), gen);
     }
 }
@@ -322,14 +322,16 @@ static void finalize_objects(MVMThreadContext *tc, MVMuint8 gen) {
 }
 
 static void acknowledge_finish(MVMThreadContext *tc) {
+    AO_t tmp0;
     /* Signal acknowledgement of completing the cleanup,
      * except for STables, and if we're the final to do
      * so, free the STables, which have been linked. */
-    if (MVM_decr(&tc->instance->gc_ack) == 2) {
+    if ((tmp0 = MVM_decr(&tc->instance->gc_ack)) == 2) {
         MVM_store(&tc->instance->gc_thread_id, 0);
-        MVM_decr(&tc->instance->gc_ack);
+        tmp0 = MVM_decr(&tc->instance->gc_ack);
     }
-    GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE, "acknowledged finish\n");
+    GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE,
+        "acknowledged finish; decr to %d\n", tmp0 - 1);
 }
 
 /* Do GC work for this thread and stolen ones. */

@@ -133,7 +133,8 @@ void MVM_gc_enter_from_allocator(MVMThreadContext *tc) {
 
     /* Meed to wait for other threads to reset their gc_status from
      * the last GC run. */
-    while (MVM_load(&tc->instance->gc_ack))
+    while (    MVM_load(&tc->instance->gc_ack)
+            && !MVM_load(&tc->instance->gc_start))
         MVM_platform_yield();
 
     /* Try to start the GC run. We first must be able to interrupt ourself,
@@ -218,7 +219,8 @@ void MVM_gc_enter_from_interrupt(MVMThreadContext *tc) {
 
     /* Meed to wait for other threads to reset their gc_status from
      * the last GC run. */
-    while (MVM_load(&tc->instance->gc_ack))
+    while (    MVM_load(&tc->instance->gc_ack)
+            && !MVM_load(&tc->instance->gc_start))
         MVM_platform_yield();
 
     register_for_gc_run(tc);
