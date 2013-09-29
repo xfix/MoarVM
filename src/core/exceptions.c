@@ -34,7 +34,15 @@ static const char * cat_name(MVMThreadContext *tc, MVMint32 cat) {
 /* Checks if an exception handler is already on the active handler stack,
  * so we don't re-trigger the same exception handler. */
 static MVMuint8 in_handler_stack(MVMThreadContext *tc, MVMFrameHandler *fh) {
-    /* XXX TODO: Implement this check. */
+    if (tc->active_handlers) {
+        MVMActiveHandler *ah = tc->active_handlers;
+        while (ah) {
+            if (ah->handler == fh)
+                return 1;
+            ah = ah->next_handler;
+        }
+    }
+
     return 0;
 }
 
@@ -57,7 +65,7 @@ static MVMFrameHandler * search_frame_handlers(MVMThreadContext *tc, MVMFrame *f
         pc = (MVMuint32)(f->return_address - sf->body.bytecode);
     for (i = 0; i < sf->body.num_handlers; i++) {
         if (sf->body.handlers[i].category_mask & cat)
-            if (pc >= sf->body.handlers[i].start_offset && pc < sf->body.handlers[i].end_offset)
+            if (pc >= sf->body.handlers[i].start_offset && pc <= sf->body.handlers[i].end_offset)
                 if (!in_handler_stack(tc, &sf->body.handlers[i]))
                     return &sf->body.handlers[i];
     }
@@ -116,7 +124,7 @@ static void unwind_to_frame(MVMThreadContext *tc, MVMFrame *target) {
 }
 
 /* Dummy, 0-arg callsite for invoking handlers. */
-static MVMCallsite no_arg_callsite = { NULL, 0, 0 };
+static MVMCallsite no_arg_callsite = { NULL, 0, 0, 0 };
 
 /* Runs an exception handler (which really means updating interpreter state
  * so that when we return to the runloop, we're in the handler). If there is
@@ -143,10 +151,10 @@ static void run_handler(MVMThreadContext *tc, LocatedHandler lh, MVMObject *ex_o
                 MVM_panic(1, "Exception object creation NYI");
 
             /* Install active handler record. */
-            ah->frame = lh.frame;
-            ah->handler = lh.handler;
-            ah->ex_obj = ex_obj;
-            ah->next_handler = tc->active_handlers;
+            ah->frame           = MVM_frame_inc_ref(tc, lh.frame);
+            ah->handler         = lh.handler;
+            ah->ex_obj          = ex_obj;
+            ah->next_handler    = tc->active_handlers;
             tc->active_handlers = ah;
 
             /* Set up special return to unwinding after running the
@@ -180,6 +188,7 @@ static void unwind_after_handler(MVMThreadContext *tc, void *sr_data) {
     *tc->interp_cur_op = *tc->interp_bytecode_start + ah->handler->goto_offset;
 
     /* Clean up. */
+    MVM_frame_dec_ref(tc, ah->frame);
     free(ah);
 }
 
@@ -230,11 +239,11 @@ MVMObject * MVM_exception_backtrace_strings(MVMThreadContext *tc, MVMObject *ex_
         MVM_exception_throw_adhoc(tc, "Can only throw an exception object");
 
     cur_frame = ex->body.origin;
-    arr = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTArray);
+    arr = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTArray);
 
     MVMROOT(tc, arr, {
         while (cur_frame != NULL) {
-            MVMObject *pobj = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTStr);
+            MVMObject *pobj = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTStr);
             MVMROOT(tc, pobj, {
                 MVM_repr_set_str(tc, pobj, cur_frame->static_info->body.name);
                 MVM_repr_push_o(tc, arr, pobj);
@@ -318,6 +327,34 @@ void MVM_exception_throwobj(MVMThreadContext *tc, MVMuint8 mode, MVMObject *ex_o
     run_handler(tc, lh, ex_obj);
 }
 
+void MVM_exception_resume(MVMThreadContext *tc, MVMObject *ex_obj) {
+    MVMException *ex;
+    MVMActiveHandler *ah;
+
+    if (IS_CONCRETE(ex_obj) && REPR(ex_obj)->ID == MVM_REPR_ID_MVMException)
+        ex = (MVMException *)ex_obj;
+    else
+        MVM_exception_throw_adhoc(tc, "Can only resume an exception object");
+
+    if (ex->body.origin->special_return == unwind_after_handler) {
+        /* A handler was already installed, just use it. */
+        ah = (MVMActiveHandler *)ex->body.origin->special_return_data;
+    }
+    else {
+        /* We need to allocate/register a handler and set some defaults. */
+        ah                                   = malloc(sizeof(MVMActiveHandler));
+        ah->ex_obj                           = ex_obj;
+        ah->next_handler                     = tc->active_handlers;
+        tc->active_handlers                  = ah;
+        tc->cur_frame->return_value          = NULL;
+        tc->cur_frame->return_type           = MVM_RETURN_VOID;
+        ex->body.origin->special_return_data = (void *)ah;
+    }
+
+    ah->frame                = (void *)MVM_frame_inc_ref(tc, ex->body.origin);
+    ah->handler->goto_offset = ex->body.goto_offset;
+}
+
 /* Creates a new lexotic. */
 MVMObject * MVM_exception_newlexotic(MVMThreadContext *tc, MVMuint32 offset) {
     MVMLexotic *lexotic;
@@ -396,6 +433,6 @@ void MVM_exception_throw_adhoc_va(MVMThreadContext *tc, const char *messageForma
         exit(1);
 }
 
-void MVM_crash_on_error() {
+void MVM_crash_on_error(void) {
     crash_on_error = 1;
 }

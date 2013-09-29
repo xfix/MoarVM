@@ -25,6 +25,7 @@ static void thread_initial_invoke(MVMThreadContext *tc, void *data) {
     ts->no_arg_callsite.arg_flags = NULL;
     ts->no_arg_callsite.arg_count = 0;
     ts->no_arg_callsite.num_pos   = 0;
+    ts->no_arg_callsite.has_flattening = 0;
 
     /* Create initial frame, which sets up all of the interpreter state also. */
     STABLE(invokee)->invoke(tc, invokee, &ts->no_arg_callsite, NULL);
@@ -71,11 +72,7 @@ static void start_thread(void *data) {
     free(ts);
 
     /* Exit the thread, now it's completed. */
-#ifdef _WIN32
-    ExitThread(0);
-#else
-    pthread_exit(NULL);
-#endif
+    MVM_platform_thread_exit(NULL);
 }
 
 MVMObject * MVM_thread_start(MVMThreadContext *tc, MVMObject *invokee, MVMObject *result_type) {

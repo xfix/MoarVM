@@ -492,5 +492,7 @@
 #define MVM_OP_shell 488
 #define MVM_OP_cwd 489
 #define MVM_OP_seed 490
+#define MVM_OP_rethrow 491
+#define MVM_OP_resume 492
 
 MVMOpInfo * MVM_op_get_op(unsigned short op);

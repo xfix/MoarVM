@@ -1197,7 +1197,8 @@ QAST::MASTOperations.add_core_moarop_mapping('newexception', 'newexception');
 QAST::MASTOperations.add_core_moarop_mapping('backtracestrings', 'backtracestrings');
 # XXX backtrace
 QAST::MASTOperations.add_core_moarop_mapping('throw', 'throwdyn');
-# XXX rethrow, resume
+QAST::MASTOperations.add_core_moarop_mapping('rethrow', 'rethrow');
+QAST::MASTOperations.add_core_moarop_mapping('resume', 'resume');
 
 my %handler_names := nqp::hash(
     'CATCH',   $HandlerCategory::catch,
@@ -1631,7 +1632,7 @@ QAST::MASTOperations.add_core_moarop_mapping('scobjcount', 'scobjcount');
 QAST::MASTOperations.add_core_moarop_mapping('setobjsc', 'setobjsc', 0);
 QAST::MASTOperations.add_core_moarop_mapping('getobjsc', 'getobjsc');
 QAST::MASTOperations.add_core_moarop_mapping('serialize', 'serialize');
-QAST::MASTOperations.add_core_moarop_mapping('deserialize', 'deserialize');
+QAST::MASTOperations.add_core_moarop_mapping('deserialize', 'deserialize', 0);
 QAST::MASTOperations.add_core_moarop_mapping('scwbdisable', 'scwbdisable');
 QAST::MASTOperations.add_core_moarop_mapping('scwbenable', 'scwbenable');
 QAST::MASTOperations.add_core_moarop_mapping('pushcompsc', 'pushcompsc', 0);

@@ -27,9 +27,12 @@ struct MVMStringConsts {
     MVMString *Num;
 };
 
-struct MVMREPRHashEntry {
-    /* index of the REPR */
-    MVMuint32 value;
+struct MVMReprRegistry {
+    /* name of the REPR */
+    MVMString *name;
+
+    /* the REPR vtable */
+    const MVMREPROps *repr;
 
     /* the uthash hash handle inline struct. */
     UT_hash_handle hash_handle;
@@ -72,19 +75,22 @@ struct MVMInstance {
     MVMObject *CallCapture;
 
     /* Set of bootstrapping types. */
-    MVMBootTypes *boot_types;
+    MVMBootTypes boot_types;
 
     /* Set of string constants. */
-    MVMStringConsts *str_consts;
-
-    /* An array mapping representation IDs to function tables. */
-    MVMREPROps **repr_registry;
+    MVMStringConsts str_consts;
 
     /* Number of representations registered so far. */
     MVMuint32 num_reprs;
 
-    /* Hash mapping representation names to IDs. */
-    MVMREPRHashEntry *repr_name_to_id_hash;
+    /* An array mapping representation IDs to registry entries. */
+    MVMReprRegistry **repr_list;
+
+    /* A hash mapping representation names to registry entries. */
+    MVMReprRegistry *repr_hash;
+
+    /* Mutex for REPR registration. */
+    uv_mutex_t mutex_repr_registry;
 
     /* Number of permanent GC roots we've got, allocated space for, and
      * a list of the addresses to them. The mutex controls writing to the
@@ -125,7 +131,7 @@ struct MVMInstance {
     const char     *prog_name;
     /* cached parsed command line args */
     MVMObject      *clargs;
-    
+
     /* Cached environment. */
     MVMObject *env_hash;
 

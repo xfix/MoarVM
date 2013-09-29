@@ -853,7 +853,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                     MVMuint8 found = 0;
                     MVM_string_flatten(tc, name);
                     if (sf->body.lexical_names) {
-                        MVMLexicalHashEntry *entry;
+                        MVMLexicalRegistry *entry;
                         MVM_HASH_GET(tc, sf->body.lexical_names, name, entry);
                         if (entry && sf->body.lexical_types[entry->value] == MVM_reg_obj) {
                             MVM_ASSIGN_REF(tc, sf, sf->body.static_env[entry->value].o, val);
@@ -966,11 +966,15 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 goto NEXT;
             }
             OP(die): {
-                MVMObject *ex_obj = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTException);
+                MVMObject *ex_obj = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTException);
                 MVMException *ex = (MVMException *)ex_obj;
+                MVMRegister *resume_result = &GET_REG(cur_op, 0);
+
                 ex->body.category = MVM_EX_CAT_CATCH;
                 MVM_ASSIGN_REF(tc, ex_obj, ex->body.message, GET_REG(cur_op, 2).s);
-                MVM_exception_throwobj(tc, MVM_EX_THROW_DYN, ex_obj, &GET_REG(cur_op, 0));
+                cur_op += 4;
+                ex->body.goto_offset = (MVMuint32)(*tc->interp_cur_op - *tc->interp_bytecode_start);
+                MVM_exception_throwobj(tc, MVM_EX_THROW_DYN, ex_obj, resume_result);
                 goto NEXT;
             }
             OP(newlexotic): {
@@ -1140,7 +1144,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             OP(assign): {
                 MVMObject *cont  = GET_REG(cur_op, 0).o;
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                MVMContainerSpec *spec = STABLE(cont)->container_spec;
+                const MVMContainerSpec *spec = STABLE(cont)->container_spec;
                 MVMRegister value;
                 cur_op += 4;
                 if (spec) {
@@ -1154,7 +1158,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             OP(assignunchecked): {
                 MVMObject *cont  = GET_REG(cur_op, 0).o;
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                MVMContainerSpec *spec = STABLE(cont)->container_spec;
+                const MVMContainerSpec *spec = STABLE(cont)->container_spec;
                 MVMRegister value;
                 cur_op += 4;
                 if (spec) {
@@ -1422,19 +1426,19 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 cur_op += 4;
                 goto NEXT;
             OP(iscclass):
-                GET_REG(cur_op, 0).i64 = MVM_string_iscclass(tc,
+                GET_REG(cur_op, 0).i64 = MVM_string_is_cclass(tc,
                     GET_REG(cur_op, 2).i64, GET_REG(cur_op, 4).s,
                     GET_REG(cur_op, 6).i64);
                 cur_op += 8;
                 goto NEXT;
             OP(findcclass):
-                GET_REG(cur_op, 0).i64 = MVM_string_findcclass(tc,
+                GET_REG(cur_op, 0).i64 = MVM_string_find_cclass(tc,
                     GET_REG(cur_op, 2).i64, GET_REG(cur_op, 4).s,
                     GET_REG(cur_op, 6).i64, GET_REG(cur_op, 8).i64);
                 cur_op += 10;
                 goto NEXT;
             OP(findnotcclass):
-                GET_REG(cur_op, 0).i64 = MVM_string_findnotcclass(tc,
+                GET_REG(cur_op, 0).i64 = MVM_string_find_not_cclass(tc,
                     GET_REG(cur_op, 2).i64, GET_REG(cur_op, 4).s,
                     GET_REG(cur_op, 6).i64, GET_REG(cur_op, 8).i64);
                 cur_op += 10;
@@ -1886,7 +1890,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 MVM_exception_throw_adhoc(tc, "atkey_i/n NYI");
             OP(atkey_s): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                MVMObject *result = REPR(obj)->ass_funcs->at_key_boxed(tc,
+                MVMObject *result = REPR(obj)->ass_funcs.at_key_boxed(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     (MVMObject *)GET_REG(cur_op, 4).s);
                 if (REPR(result)->ID != MVM_REPR_ID_MVMString)
@@ -1898,7 +1902,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             OP(atkey_o): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
                 if (IS_CONCRETE(obj))
-                    GET_REG(cur_op, 0).o = REPR(obj)->ass_funcs->at_key_boxed(tc,
+                    GET_REG(cur_op, 0).o = REPR(obj)->ass_funcs.at_key_boxed(tc,
                         STABLE(obj), obj, OBJECT_BODY(obj),
                         (MVMObject *)GET_REG(cur_op, 4).s);
                 else
@@ -1911,7 +1915,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 MVM_exception_throw_adhoc(tc, "bindkey_i/n NYI");
             OP(bindkey_s): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->ass_funcs->bind_key_boxed(tc, STABLE(obj), obj,
+                REPR(obj)->ass_funcs.bind_key_boxed(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), (MVMObject *)GET_REG(cur_op, 2).s,
                     (MVMObject *)GET_REG(cur_op, 4).s);
                 cur_op += 6;
@@ -1919,7 +1923,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindkey_o): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->ass_funcs->bind_key_boxed(tc, STABLE(obj), obj,
+                REPR(obj)->ass_funcs.bind_key_boxed(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), (MVMObject *)GET_REG(cur_op, 2).s,
                     GET_REG(cur_op, 4).o);
                 cur_op += 6;
@@ -1927,7 +1931,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(existskey): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                GET_REG(cur_op, 0).i64 = REPR(obj)->ass_funcs->exists_key(tc,
+                GET_REG(cur_op, 0).i64 = REPR(obj)->ass_funcs.exists_key(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     (MVMObject *)GET_REG(cur_op, 4).s);
                 cur_op += 6;
@@ -1935,23 +1939,25 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(deletekey): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->ass_funcs->delete_key(tc, STABLE(obj), obj,
+                REPR(obj)->ass_funcs.delete_key(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), (MVMObject *)GET_REG(cur_op, 2).s);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(getwhere):
-                GET_REG(cur_op, 2).i64 = (MVMint64)GET_REG(cur_op, 2).o;
+                GET_REG(cur_op, 0).i64 = (MVMint64)GET_REG(cur_op, 2).o;
                 cur_op += 4;
                 goto NEXT;
             OP(eqaddr):
                 GET_REG(cur_op, 0).i64 = GET_REG(cur_op, 2).o == GET_REG(cur_op, 4).o ? 1 : 0;
                 cur_op += 6;
                 goto NEXT;
-            OP(reprname):
-                GET_REG(cur_op, 0).s = REPR(GET_REG(cur_op, 2).o)->name;
+            OP(reprname): {
+                const MVMREPROps *repr = REPR(GET_REG(cur_op, 2).o);
+                GET_REG(cur_op, 0).s = tc->instance->repr_list[repr->ID]->name;
                 cur_op += 4;
                 goto NEXT;
+            }
             OP(isconcrete): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
                 GET_REG(cur_op, 0).i64 = obj && IS_CONCRETE(obj) ? 1 : 0;
@@ -1960,7 +1966,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(atpos_i): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->pos_funcs->at_pos(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.at_pos(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 4).i64,
                     &GET_REG(cur_op, 0), MVM_reg_int64);
                 cur_op += 6;
@@ -1968,7 +1974,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(atpos_n): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->pos_funcs->at_pos(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.at_pos(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 4).i64,
                     &GET_REG(cur_op, 0), MVM_reg_num64);
                 cur_op += 6;
@@ -1976,7 +1982,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(atpos_s): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->pos_funcs->at_pos(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.at_pos(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 4).i64,
                     &GET_REG(cur_op, 0), MVM_reg_str);
                 cur_op += 6;
@@ -1985,7 +1991,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             OP(atpos_o): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
                 if (IS_CONCRETE(obj))
-                    REPR(obj)->pos_funcs->at_pos(tc, STABLE(obj), obj,
+                    REPR(obj)->pos_funcs.at_pos(tc, STABLE(obj), obj,
                         OBJECT_BODY(obj), GET_REG(cur_op, 4).i64,
                         &GET_REG(cur_op, 0), MVM_reg_obj);
                 else
@@ -1995,7 +2001,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindpos_i): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->bind_pos(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.bind_pos(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2).i64,
                     GET_REG(cur_op, 4), MVM_reg_int64);
                 cur_op += 6;
@@ -2003,7 +2009,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindpos_n): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->bind_pos(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.bind_pos(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2).i64,
                     GET_REG(cur_op, 4), MVM_reg_num64);
                 cur_op += 6;
@@ -2011,7 +2017,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindpos_s): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->bind_pos(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.bind_pos(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2).i64,
                     GET_REG(cur_op, 4), MVM_reg_str);
                 cur_op += 6;
@@ -2019,7 +2025,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindpos_o): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->bind_pos(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.bind_pos(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2).i64,
                     GET_REG(cur_op, 4), MVM_reg_obj);
                 cur_op += 6;
@@ -2027,119 +2033,119 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(push_i): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->push(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.push(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2), MVM_reg_int64);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(push_n): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->push(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.push(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2), MVM_reg_num64);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(push_s): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->push(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.push(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2), MVM_reg_str);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(push_o): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->push(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.push(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2), MVM_reg_obj);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(pop_i): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->pos_funcs->pop(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.pop(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), &GET_REG(cur_op, 0), MVM_reg_int64);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(pop_n): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->pos_funcs->pop(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.pop(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), &GET_REG(cur_op, 0), MVM_reg_num64);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(pop_s): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->pos_funcs->pop(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.pop(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), &GET_REG(cur_op, 0), MVM_reg_str);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(pop_o): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->pos_funcs->pop(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.pop(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), &GET_REG(cur_op, 0), MVM_reg_obj);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(unshift_i): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->unshift(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.unshift(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2), MVM_reg_int64);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(unshift_n): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->unshift(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.unshift(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2), MVM_reg_num64);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(unshift_s): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->unshift(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.unshift(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2), MVM_reg_str);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(unshift_o): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->unshift(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.unshift(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2), MVM_reg_obj);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(shift_i): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->pos_funcs->shift(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.shift(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), &GET_REG(cur_op, 0), MVM_reg_int64);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(shift_n): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->pos_funcs->shift(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.shift(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), &GET_REG(cur_op, 0), MVM_reg_num64);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(shift_s): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->pos_funcs->shift(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.shift(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), &GET_REG(cur_op, 0), MVM_reg_str);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(shift_o): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->pos_funcs->shift(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.shift(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), &GET_REG(cur_op, 0), MVM_reg_obj);
                 cur_op += 4;
                 goto NEXT;
             }
             OP(splice): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->splice(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.splice(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2).o,
                     GET_REG(cur_op, 4).i64, GET_REG(cur_op, 6).i64);
                 cur_op += 8;
@@ -2147,7 +2153,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(setelemspos): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->pos_funcs->set_elems(tc, STABLE(obj), obj,
+                REPR(obj)->pos_funcs.set_elems(tc, STABLE(obj), obj,
                     OBJECT_BODY(obj), GET_REG(cur_op, 2).i64);
                 cur_op += 4;
                 goto NEXT;
@@ -2158,7 +2164,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 MVMROOT(tc, box, {
                     if (REPR(box)->initialize)
                         REPR(box)->initialize(tc, STABLE(box), box, OBJECT_BODY(box));
-                    REPR(box)->box_funcs->set_int(tc, STABLE(box), box,
+                    REPR(box)->box_funcs.set_int(tc, STABLE(box), box,
                         OBJECT_BODY(box), GET_REG(cur_op, 2).i64);
                     GET_REG(cur_op, 0).o = box;
                 });
@@ -2171,7 +2177,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 MVMROOT(tc, box, {
                     if (REPR(box)->initialize)
                         REPR(box)->initialize(tc, STABLE(box), box, OBJECT_BODY(box));
-                    REPR(box)->box_funcs->set_num(tc, STABLE(box), box,
+                    REPR(box)->box_funcs.set_num(tc, STABLE(box), box,
                         OBJECT_BODY(box), GET_REG(cur_op, 2).n64);
                     GET_REG(cur_op, 0).o = box;
                 });
@@ -2184,7 +2190,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 MVMROOT(tc, box, {
                     if (REPR(box)->initialize)
                         REPR(box)->initialize(tc, STABLE(box), box, OBJECT_BODY(box));
-                    REPR(box)->box_funcs->set_str(tc, STABLE(box), box,
+                    REPR(box)->box_funcs.set_str(tc, STABLE(box), box,
                         OBJECT_BODY(box), GET_REG(cur_op, 2).s);
                     GET_REG(cur_op, 0).o = box;
                 });
@@ -2193,28 +2199,28 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(unbox_i): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                GET_REG(cur_op, 0).i64 = REPR(obj)->box_funcs->get_int(tc,
+                GET_REG(cur_op, 0).i64 = REPR(obj)->box_funcs.get_int(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj));
                 cur_op += 4;
                 goto NEXT;
             }
             OP(unbox_n): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                GET_REG(cur_op, 0).n64 = REPR(obj)->box_funcs->get_num(tc,
+                GET_REG(cur_op, 0).n64 = REPR(obj)->box_funcs.get_num(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj));
                 cur_op += 4;
                 goto NEXT;
             }
             OP(unbox_s): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                GET_REG(cur_op, 0).s = REPR(obj)->box_funcs->get_str(tc,
+                GET_REG(cur_op, 0).s = REPR(obj)->box_funcs.get_str(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj));
                 cur_op += 4;
                 goto NEXT;
             }
             OP(bindattr_i): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->attr_funcs->bind_attribute(tc,
+                REPR(obj)->attr_funcs.bind_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 2).o, cu->body.strings[GET_UI16(cur_op, 4)],
                     GET_I16(cur_op, 8), GET_REG(cur_op, 6), MVM_reg_int64);
@@ -2223,7 +2229,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindattr_n): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->attr_funcs->bind_attribute(tc,
+                REPR(obj)->attr_funcs.bind_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 2).o, cu->body.strings[GET_UI16(cur_op, 4)],
                     GET_I16(cur_op, 8), GET_REG(cur_op, 6), MVM_reg_num64);
@@ -2232,7 +2238,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindattr_s): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->attr_funcs->bind_attribute(tc,
+                REPR(obj)->attr_funcs.bind_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 2).o, cu->body.strings[GET_UI16(cur_op, 4)],
                     GET_I16(cur_op, 8), GET_REG(cur_op, 6), MVM_reg_str);
@@ -2241,7 +2247,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindattr_o): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->attr_funcs->bind_attribute(tc,
+                REPR(obj)->attr_funcs.bind_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 2).o, cu->body.strings[GET_UI16(cur_op, 4)],
                     GET_I16(cur_op, 8), GET_REG(cur_op, 6), MVM_reg_obj);
@@ -2250,7 +2256,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindattrs_i): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->attr_funcs->bind_attribute(tc,
+                REPR(obj)->attr_funcs.bind_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 2).o, GET_REG(cur_op, 4).s,
                     -1, GET_REG(cur_op, 6), MVM_reg_int64);
@@ -2259,7 +2265,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindattrs_n): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->attr_funcs->bind_attribute(tc,
+                REPR(obj)->attr_funcs.bind_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 2).o, GET_REG(cur_op, 4).s,
                     -1, GET_REG(cur_op, 6), MVM_reg_num64);
@@ -2268,7 +2274,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindattrs_s): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->attr_funcs->bind_attribute(tc,
+                REPR(obj)->attr_funcs.bind_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 2).o, GET_REG(cur_op, 4).s,
                     -1, GET_REG(cur_op, 6), MVM_reg_str);
@@ -2277,7 +2283,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(bindattrs_o): {
                 MVMObject *obj = GET_REG(cur_op, 0).o;
-                REPR(obj)->attr_funcs->bind_attribute(tc,
+                REPR(obj)->attr_funcs.bind_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 2).o, GET_REG(cur_op, 4).s,
                     -1, GET_REG(cur_op, 6), MVM_reg_obj);
@@ -2286,7 +2292,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(getattr_i): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->attr_funcs->get_attribute(tc,
+                REPR(obj)->attr_funcs.get_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 4).o, cu->body.strings[GET_UI16(cur_op, 6)],
                     GET_I16(cur_op, 8), &GET_REG(cur_op, 0), MVM_reg_int64);
@@ -2295,7 +2301,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(getattr_n): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->attr_funcs->get_attribute(tc,
+                REPR(obj)->attr_funcs.get_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 4).o, cu->body.strings[GET_UI16(cur_op, 6)],
                     GET_I16(cur_op, 8), &GET_REG(cur_op, 0), MVM_reg_num64);
@@ -2304,7 +2310,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(getattr_s): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->attr_funcs->get_attribute(tc,
+                REPR(obj)->attr_funcs.get_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 4).o, cu->body.strings[GET_UI16(cur_op, 6)],
                     GET_I16(cur_op, 8), &GET_REG(cur_op, 0), MVM_reg_str);
@@ -2313,7 +2319,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(getattr_o): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->attr_funcs->get_attribute(tc,
+                REPR(obj)->attr_funcs.get_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 4).o, cu->body.strings[GET_UI16(cur_op, 6)],
                     GET_I16(cur_op, 8), &GET_REG(cur_op, 0), MVM_reg_obj);
@@ -2322,7 +2328,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(getattrs_i): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->attr_funcs->get_attribute(tc,
+                REPR(obj)->attr_funcs.get_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 4).o, GET_REG(cur_op, 6).s,
                     -1, &GET_REG(cur_op, 0), MVM_reg_int64);
@@ -2331,7 +2337,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(getattrs_n): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->attr_funcs->get_attribute(tc,
+                REPR(obj)->attr_funcs.get_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 4).o, GET_REG(cur_op, 6).s,
                     -1, &GET_REG(cur_op, 0), MVM_reg_num64);
@@ -2340,7 +2346,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(getattrs_s): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->attr_funcs->get_attribute(tc,
+                REPR(obj)->attr_funcs.get_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 4).o, GET_REG(cur_op, 6).s,
                     -1, &GET_REG(cur_op, 0), MVM_reg_str);
@@ -2349,7 +2355,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(getattrs_o): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                REPR(obj)->attr_funcs->get_attribute(tc,
+                REPR(obj)->attr_funcs.get_attribute(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj),
                     GET_REG(cur_op, 4).o, GET_REG(cur_op, 6).s,
                     -1, &GET_REG(cur_op, 0), MVM_reg_obj);
@@ -2390,23 +2396,23 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 cur_op += 4;
                 goto NEXT;
             OP(bootint):
-                GET_REG(cur_op, 0).o = tc->instance->boot_types->BOOTInt;
+                GET_REG(cur_op, 0).o = tc->instance->boot_types.BOOTInt;
                 cur_op += 2;
                 goto NEXT;
             OP(bootnum):
-                GET_REG(cur_op, 0).o = tc->instance->boot_types->BOOTNum;
+                GET_REG(cur_op, 0).o = tc->instance->boot_types.BOOTNum;
                 cur_op += 2;
                 goto NEXT;
             OP(bootstr):
-                GET_REG(cur_op, 0).o = tc->instance->boot_types->BOOTStr;
+                GET_REG(cur_op, 0).o = tc->instance->boot_types.BOOTStr;
                 cur_op += 2;
                 goto NEXT;
             OP(bootarray):
-                GET_REG(cur_op, 0).o = tc->instance->boot_types->BOOTArray;
+                GET_REG(cur_op, 0).o = tc->instance->boot_types.BOOTArray;
                 cur_op += 2;
                 goto NEXT;
             OP(boothash):
-                GET_REG(cur_op, 0).o = tc->instance->boot_types->BOOTHash;
+                GET_REG(cur_op, 0).o = tc->instance->boot_types.BOOTHash;
                 cur_op += 2;
                 goto NEXT;
             OP(sethllconfig):
@@ -2438,7 +2444,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             OP(newtype): {
                 MVMObject *type_obj, *how = GET_REG(cur_op, 2).o;
                 MVMString *repr_name = GET_REG(cur_op, 4).s;
-                MVMREPROps *repr = MVM_repr_get_by_name(tc, repr_name);
+                const MVMREPROps *repr = MVM_repr_get_by_name(tc, repr_name);
                 GET_REG(cur_op, 0).o = repr->type_object_for(tc, how);
                 cur_op += 6;
                 goto NEXT;
@@ -2484,16 +2490,16 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 goto NEXT;
             }
             OP(setmethcache): {
-                MVMObject *cache = REPR(tc->instance->boot_types->BOOTHash)->allocate(tc, STABLE(tc->instance->boot_types->BOOTHash));
+                MVMObject *cache = REPR(tc->instance->boot_types.BOOTHash)->allocate(tc, STABLE(tc->instance->boot_types.BOOTHash));
                 MVMObject *iter = MVM_iter(tc, GET_REG(cur_op, 2).o);
                 MVMObject *obj = GET_REG(cur_op, 0).o;
                 while (MVM_iter_istrue(tc, (MVMIter *)iter)) {
                     MVMRegister result;
                     MVMObject *cur;
-                    REPR(iter)->pos_funcs->shift(tc, STABLE(iter), iter,
+                    REPR(iter)->pos_funcs.shift(tc, STABLE(iter), iter,
                         OBJECT_BODY(iter), &result, MVM_reg_obj);
                     cur = result.o;
-                    REPR(cache)->ass_funcs->bind_key_boxed(tc, STABLE(cache), cache,
+                    REPR(cache)->ass_funcs.bind_key_boxed(tc, STABLE(cache), cache,
                         OBJECT_BODY(cache), (MVMObject *)MVM_iterkey_s(tc, (MVMIter *)iter),
                         MVM_iterval(tc, (MVMIter *)iter));
                 }
@@ -2655,7 +2661,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             OP(getcomp): {
                 MVMObject *obj = tc->instance->compiler_registry;
                 uv_mutex_lock(&tc->instance->mutex_compiler_registry);
-                GET_REG(cur_op, 0).o = REPR(obj)->ass_funcs->at_key_boxed(tc,
+                GET_REG(cur_op, 0).o = REPR(obj)->ass_funcs.at_key_boxed(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj), (MVMObject *)GET_REG(cur_op, 2).s);
                 uv_mutex_unlock(&tc->instance->mutex_compiler_registry);
                 cur_op += 4;
@@ -2664,7 +2670,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             OP(bindcomp): {
                 MVMObject *obj = tc->instance->compiler_registry;
                 uv_mutex_lock(&tc->instance->mutex_compiler_registry);
-                REPR(obj)->ass_funcs->bind_key_boxed(tc,
+                REPR(obj)->ass_funcs.bind_key_boxed(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj), (MVMObject *)GET_REG(cur_op, 2).s, GET_REG(cur_op, 4).o);
                 uv_mutex_unlock(&tc->instance->mutex_compiler_registry);
                 GET_REG(cur_op, 0).o = GET_REG(cur_op, 4).o;
@@ -2677,7 +2683,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 uv_mutex_lock(&tc->instance->mutex_hll_syms);
                 hash = MVM_repr_at_key_boxed(tc, syms, hll_name);
                 if (!hash) {
-                    hash = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTHash);
+                    hash = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTHash);
                     /* must re-get syms in case it moved */
                     syms = tc->instance->hll_syms;
                     hll_name = tc->cur_frame->static_info->body.cu->body.hll_name;
@@ -2697,7 +2703,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 uv_mutex_lock(&tc->instance->mutex_hll_syms);
                 hash = MVM_repr_at_key_boxed(tc, syms, hll_name);
                 if (!hash) {
-                    hash = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTHash);
+                    hash = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTHash);
                     /* must re-get syms in case it moved */
                     syms = tc->instance->hll_syms;
                     hll_name = tc->cur_frame->static_info->body.cu->body.hll_name;
@@ -2734,7 +2740,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 cur_op += 6;
                 goto NEXT;
             OP(ctx): {
-                MVMObject *ctx = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTContext);
+                MVMObject *ctx = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTContext);
                 ((MVMContext *)ctx)->body.context = MVM_frame_inc_ref(tc, tc->cur_frame);
                 GET_REG(cur_op, 0).o = ctx;
                 cur_op += 2;
@@ -2747,7 +2753,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                     MVM_exception_throw_adhoc(tc, "ctxouter needs an MVMContext");
                 }
                 if ((frame = ((MVMContext *)this_ctx)->body.context->outer)) {
-                    ctx = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTContext);
+                    ctx = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTContext);
                     ((MVMContext *)ctx)->body.context = MVM_frame_inc_ref(tc, frame);
                     GET_REG(cur_op, 0).o = ctx;
                 }
@@ -2764,7 +2770,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                     MVM_exception_throw_adhoc(tc, "ctxcaller needs an MVMContext");
                 }
                 if ((frame = ((MVMContext *)this_ctx)->body.context->caller)) {
-                    ctx = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTContext);
+                    ctx = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTContext);
                     ((MVMContext *)ctx)->body.context = MVM_frame_inc_ref(tc, frame);
                 }
                 GET_REG(cur_op, 0).o = ctx;
@@ -2792,15 +2798,15 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 goto NEXT;
             }
             OP(bootintarray):
-                GET_REG(cur_op, 0).o = tc->instance->boot_types->BOOTIntArray;
+                GET_REG(cur_op, 0).o = tc->instance->boot_types.BOOTIntArray;
                 cur_op += 2;
                 goto NEXT;
             OP(bootnumarray):
-                GET_REG(cur_op, 0).o = tc->instance->boot_types->BOOTNumArray;
+                GET_REG(cur_op, 0).o = tc->instance->boot_types.BOOTNumArray;
                 cur_op += 2;
                 goto NEXT;
             OP(bootstrarray):
-                GET_REG(cur_op, 0).o = tc->instance->boot_types->BOOTStrArray;
+                GET_REG(cur_op, 0).o = tc->instance->boot_types.BOOTStrArray;
                 cur_op += 2;
                 goto NEXT;
             OP(hlllist):
@@ -2813,7 +2819,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 goto NEXT;
             OP(attrinited): {
                 MVMObject *obj = GET_REG(cur_op, 2).o;
-                GET_REG(cur_op, 0).i64 = REPR(obj)->attr_funcs->is_attribute_initialized(tc,
+                GET_REG(cur_op, 0).i64 = REPR(obj)->attr_funcs.is_attribute_initialized(tc,
                     STABLE(obj), OBJECT_BODY(obj),
                     GET_REG(cur_op, 4).o, GET_REG(cur_op, 6).s, MVM_NO_HINT);
                 cur_op += 8;
@@ -2821,7 +2827,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(setcontspec): {
                 MVMSTable *st = STABLE(GET_REG(cur_op, 0).o);
-                MVMContainerConfigurer *cc = MVM_6model_get_container_config(tc, GET_REG(cur_op, 2).s);
+                const MVMContainerConfigurer *cc = MVM_6model_get_container_config(tc, GET_REG(cur_op, 2).s);
                 if (st->container_spec) {
                     MVM_exception_throw_adhoc(tc,
                         "Cannot change a type's container specification");
@@ -2834,7 +2840,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(existspos): {
                 MVMObject * const obj = GET_REG(cur_op, 2).o;
-                GET_REG(cur_op, 0).i64 = REPR(obj)->pos_funcs->exists_pos(tc,
+                GET_REG(cur_op, 0).i64 = REPR(obj)->pos_funcs.exists_pos(tc,
                     STABLE(obj), obj, OBJECT_BODY(obj), GET_REG(cur_op, 4).i64);
                 cur_op += 6;
                 goto NEXT;
@@ -2846,7 +2852,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 hash = MVM_repr_at_key_boxed(tc, syms, hll_name);
                 if (!hash) {
                     MVMROOT(tc, hll_name, {
-                        hash = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTHash);
+                        hash = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTHash);
                         /* must re-get syms in case it moved */
                         syms = tc->instance->hll_syms;
                         MVM_repr_bind_key_boxed(tc, syms, hll_name, hash);
@@ -2891,8 +2897,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(getstaticcode): {
                 MVMObject * const cr = GET_REG(cur_op, 2).o;
-                if (REPR(cr)->ID != MVM_REPR_ID_MVMCode
-                        || !((MVMCode *)cr)->body.is_static)
+                if (REPR(cr)->ID != MVM_REPR_ID_MVMCode)
                     MVM_exception_throw_adhoc(tc, "getstaticcode requires a static coderef");
                 GET_REG(cur_op, 0).o = (MVMObject *)((MVMCode *)cr)->body.sf->body.static_code;
                 cur_op += 4;
@@ -2900,8 +2905,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(getcodecuid): {
                 MVMObject * const cr = GET_REG(cur_op, 2).o;
-                if (REPR(cr)->ID != MVM_REPR_ID_MVMCode
-                        || !((MVMCode *)cr)->body.is_static)
+                if (REPR(cr)->ID != MVM_REPR_ID_MVMCode)
                     MVM_exception_throw_adhoc(tc, "getcodecuid requires a static coderef");
                 GET_REG(cur_op, 0).s = ((MVMCode *)cr)->body.sf->body.cuuid;
                 cur_op += 4;
@@ -3016,7 +3020,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 goto NEXT;
             OP(connect_sk):
                 GET_REG(cur_op, 0).o = MVM_socket_connect(tc,
-                    tc->instance->boot_types->BOOTIO,
+                    tc->instance->boot_types.BOOTIO,
                     GET_REG(cur_op, 2).s, GET_REG(cur_op, 4).i64,
                     GET_REG(cur_op, 6).i64, GET_REG(cur_op, 8).i64);
                 cur_op += 10;
@@ -3027,7 +3031,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 goto NEXT;
             OP(bind_sk):
                 GET_REG(cur_op, 0).o = MVM_socket_bind(tc,
-                    tc->instance->boot_types->BOOTIO,
+                    tc->instance->boot_types.BOOTIO,
                     GET_REG(cur_op, 2).s, GET_REG(cur_op, 4).i64,
                     GET_REG(cur_op, 6).i64, GET_REG(cur_op, 8).i64);
                 cur_op += 10;
@@ -3159,12 +3163,15 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 cur_op += 4;
                 goto NEXT;
             OP(scsetobj): {
-                MVMObject *sc = GET_REG(cur_op, 0).o;
+                MVMObject *sc  = GET_REG(cur_op, 0).o;
+                MVMObject *obj = GET_REG(cur_op, 4).o;
                 if (REPR(sc)->ID != MVM_REPR_ID_SCRef)
                     MVM_exception_throw_adhoc(tc,
                         "Must provide an SCRef operand to scsetobj");
                 MVM_sc_set_object(tc, (MVMSerializationContext *)sc,
-                    GET_REG(cur_op, 2).i64, GET_REG(cur_op, 4).o);
+                    GET_REG(cur_op, 2).i64, obj);
+                if (STABLE(obj)->header.sc == NULL)
+                    MVM_sc_push_stable(tc, (MVMSerializationContext *)sc, STABLE(obj));
                 cur_op += 6;
                 goto NEXT;
             }
@@ -3254,18 +3261,17 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 goto NEXT;
             }
             OP(deserialize): {
-                MVMString *blob = GET_REG(cur_op, 2).s;
-                MVMObject *sc   = GET_REG(cur_op, 4).o;
-                MVMObject *sh   = GET_REG(cur_op, 6).o;
-                MVMObject *cr   = GET_REG(cur_op, 8).o;
-                MVMObject *conf = GET_REG(cur_op, 10).o;
+                MVMString *blob = GET_REG(cur_op, 0).s;
+                MVMObject *sc   = GET_REG(cur_op, 2).o;
+                MVMObject *sh   = GET_REG(cur_op, 4).o;
+                MVMObject *cr   = GET_REG(cur_op, 6).o;
+                MVMObject *conf = GET_REG(cur_op, 8).o;
                 if (REPR(sc)->ID != MVM_REPR_ID_SCRef)
                     MVM_exception_throw_adhoc(tc,
                         "Must provide an SCRef operand to deserialize");
                 MVM_serialization_deserialize(tc, (MVMSerializationContext *)sc,
                     sh, cr, conf, blob);
-                GET_REG(cur_op, 0).s = blob;
-                cur_op += 12;
+                cur_op += 10;
                 goto NEXT;
             }
             OP(wval): {
@@ -3317,7 +3323,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
 
                 if (!tc->compiling_scs) {
                     MVMROOT(tc, sc, {
-                        tc->compiling_scs = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTArray);
+                        tc->compiling_scs = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTArray);
                     });
                 }
                 MVM_repr_push_o(tc, tc->compiling_scs, sc);
@@ -3329,8 +3335,44 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 if (MVM_repr_elems(tc, scs) == 0)
                     MVM_exception_throw_adhoc(tc, "No current compiling SC");
 
-                REPR(scs)->pos_funcs->pop(tc, STABLE(scs), scs,
+                REPR(scs)->pos_funcs.pop(tc, STABLE(scs), scs,
                     OBJECT_BODY(scs), &GET_REG(cur_op, 0), MVM_reg_obj);
+                cur_op += 2;
+                goto NEXT;
+            }
+            OP(rethrow): {
+                MVMObject *ex_obj = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTException);
+                MVMException *ex = (MVMException *)ex_obj;
+                MVMObject *got_ex_obj = GET_REG(cur_op, 0).o;
+                ex->body.category = MVM_EX_CAT_CATCH;
+
+                if (REPR(got_ex_obj)->ID == MVM_REPR_ID_MVMException) {
+                    MVMException *got_ex = (MVMException *)got_ex_obj;
+
+                    MVM_ASSIGN_REF(tc, ex_obj, ex->body.message, got_ex->body.message);
+                    MVM_exception_throwobj(tc, MVM_EX_THROW_DYN, ex_obj, NULL);
+                }
+                else {
+                    MVM_exception_throw_adhoc(tc, "rethrow requires an MVMException");
+                }
+                cur_op += 2;
+                goto NEXT;
+            }
+            OP(resume): {
+                MVMObject *ex_obj = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTException);
+                MVMException *ex = (MVMException *)ex_obj;
+
+                MVMObject *got_ex_obj = GET_REG(cur_op, 0).o;
+                if (REPR(got_ex_obj)->ID == MVM_REPR_ID_MVMException) {
+                    MVMException *got_ex = (MVMException *)got_ex_obj;
+
+                    ex->body.origin      = MVM_frame_inc_ref(tc, got_ex->body.origin);
+                    ex->body.goto_offset = got_ex->body.goto_offset;
+                    MVM_exception_resume(tc, ex_obj);
+                }
+                else {
+                    MVM_exception_throw_adhoc(tc, "resume requires an MVMException");
+                }
                 cur_op += 2;
                 goto NEXT;
             }

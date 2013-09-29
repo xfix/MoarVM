@@ -24,7 +24,7 @@ static void create_stub_VMString(MVMThreadContext *tc) {
     /* Need to create the REPR function table "in advance"; the
      * MVMString REPR specially knows not to duplicately create
      * this. */
-    MVMREPROps *repr = MVMString_initialize(tc);
+    const MVMREPROps *repr = MVMString_initialize(tc);
 
     /* Now we can create a type object; note we have no HOW yet,
      * though. */
@@ -47,36 +47,35 @@ static void create_stub_VMString(MVMThreadContext *tc) {
 
 /* KnowHOW.new_type method. Creates a new type with this HOW as its meta-object. */
 static void new_type(MVMThreadContext *tc, MVMCallsite *callsite, MVMRegister *args) {
-    MVMObject   *self, *HOW, *type_object, *BOOTHash, *stash;
-    MVMArgInfo   repr_arg, name_arg;
-    MVMString   *repr_name, *name;
-    MVMREPROps  *repr_to_use;
+    MVMObject *self, *HOW, *type_object, *BOOTHash, *stash;
+    MVMArgInfo repr_arg, name_arg;
+    MVMString *repr_name, *name;
+    const MVMREPROps *repr_to_use;
 
     /* Get arguments. */
     MVMArgProcContext arg_ctx; arg_ctx.named_used = NULL;
     MVM_args_proc_init(tc, &arg_ctx, callsite, args);
     MVM_args_checkarity(tc, &arg_ctx, 1, 1);
-    self     = MVM_args_get_pos_obj(tc, &arg_ctx, 0, MVM_ARG_REQUIRED).arg.o;
+    self = MVM_args_get_pos_obj(tc, &arg_ctx, 0, MVM_ARG_REQUIRED).arg.o;
     repr_arg = MVM_args_get_named_str(tc, &arg_ctx, str_repr, MVM_ARG_OPTIONAL);
     name_arg = MVM_args_get_named_str(tc, &arg_ctx, str_name, MVM_ARG_OPTIONAL);
     MVM_args_proc_cleanup(tc, &arg_ctx);
     if (REPR(self)->ID != MVM_REPR_ID_KnowHOWREPR)
         MVM_exception_throw_adhoc(tc, "KnowHOW methods must be called on object with REPR KnowHOWREPR");
-    MVM_gc_root_temp_push(tc, (MVMCollectable **)&self);
-    MVM_gc_root_temp_push(tc, (MVMCollectable **)&repr_arg);
-    MVM_gc_root_temp_push(tc, (MVMCollectable **)&name_arg);
-
-    /* We first create a new HOW instance. */
-    HOW  = REPR(self)->allocate(tc, STABLE(self));
-    MVM_gc_root_temp_push(tc, (MVMCollectable **)&HOW);
 
     /* See if we have a representation name; if not default to P6opaque. */
     repr_name = repr_arg.exists ? repr_arg.arg.s : str_P6opaque;
+    repr_to_use = MVM_repr_get_by_name(tc, repr_name);
+
+    MVM_gc_root_temp_push(tc, (MVMCollectable **)&name_arg);
+
+    /* We first create a new HOW instance. */
+    HOW = REPR(self)->allocate(tc, STABLE(self));
+    MVM_gc_root_temp_push(tc, (MVMCollectable **)&HOW);
 
     /* Create a new type object of the desired REPR. (Note that we can't
      * default to KnowHOWREPR here, since it doesn't know how to actually
      * store attributes, it's just for bootstrapping knowhow's. */
-    repr_to_use = MVM_repr_get_by_name(tc, repr_name);
     type_object = repr_to_use->type_object_for(tc, HOW);
     MVM_gc_root_temp_push(tc, (MVMCollectable **)&type_object);
 
@@ -86,15 +85,16 @@ static void new_type(MVMThreadContext *tc, MVMCallsite *callsite, MVMRegister *a
     MVM_ASSIGN_REF(tc, HOW, ((MVMKnowHOWREPR *)HOW)->body.name, name);
 
     /* Set .WHO to an empty hash. */
-    BOOTHash = tc->instance->boot_types->BOOTHash;
+    BOOTHash = tc->instance->boot_types.BOOTHash;
     stash = REPR(BOOTHash)->allocate(tc, STABLE(BOOTHash));
+    MVM_gc_root_temp_push(tc, (MVMCollectable **)&stash);
     REPR(stash)->initialize(tc, STABLE(stash), stash, OBJECT_BODY(stash));
     MVM_ASSIGN_REF(tc, STABLE(type_object), STABLE(type_object)->WHO, stash);
 
     /* Return the type object. */
     MVM_args_set_result_obj(tc, type_object, MVM_RETURN_CURRENT_FRAME);
 
-    MVM_gc_root_temp_pop_n(tc, 5);
+    MVM_gc_root_temp_pop_n(tc, 4);
 }
 
 /* Adds a method. */
@@ -153,7 +153,7 @@ static void add_attribute(MVMThreadContext *tc, MVMCallsite *callsite, MVMRegist
 static void compose(MVMThreadContext *tc, MVMCallsite *callsite, MVMRegister *args) {
     MVMObject *self, *type_obj, *method_table, *attributes, *BOOTArray, *BOOTHash,
               *repr_info_hash, *repr_info, *type_info, *attr_info_list, *parent_info;
-    MVMint64   num_attrs, i;
+    MVMuint64   num_attrs, i;
 
     /* Get arguments. */
     MVMArgProcContext arg_ctx; arg_ctx.named_used = NULL;
@@ -172,26 +172,25 @@ static void compose(MVMThreadContext *tc, MVMCallsite *callsite, MVMRegister *ar
     STABLE(type_obj)->type_check_cache_length = 1;
     STABLE(type_obj)->type_check_cache        = malloc(sizeof(MVMObject *));
     MVM_ASSIGN_REF(tc, STABLE(type_obj), STABLE(type_obj)->type_check_cache[0], type_obj);
+    attributes = ((MVMKnowHOWREPR *)self)->body.attributes;
 
     /* Next steps will allocate, so make sure we keep hold of the type
      * object and ourself. */
-    MVM_gc_root_temp_push(tc, (MVMCollectable **)&self);
+    MVM_gc_root_temp_push(tc, (MVMCollectable **)&attributes);
     MVM_gc_root_temp_push(tc, (MVMCollectable **)&type_obj);
 
     /* Use any attribute information to produce attribute protocol
      * data. The protocol consists of an array... */
-    BOOTArray = tc->instance->boot_types->BOOTArray;
-    BOOTHash = tc->instance->boot_types->BOOTHash;
+    BOOTArray = tc->instance->boot_types.BOOTArray;
+    BOOTHash = tc->instance->boot_types.BOOTHash;
     MVM_gc_root_temp_push(tc, (MVMCollectable **)&BOOTArray);
     MVM_gc_root_temp_push(tc, (MVMCollectable **)&BOOTHash);
     repr_info = REPR(BOOTArray)->allocate(tc, STABLE(BOOTArray));
     MVM_gc_root_temp_push(tc, (MVMCollectable **)&repr_info);
-    REPR(repr_info)->initialize(tc, STABLE(repr_info), repr_info, OBJECT_BODY(repr_info));
 
     /* ...which contains an array per MRO entry (just us)... */
     type_info = REPR(BOOTArray)->allocate(tc, STABLE(BOOTArray));
     MVM_gc_root_temp_push(tc, (MVMCollectable **)&type_info);
-    REPR(type_info)->initialize(tc, STABLE(type_info), type_info, OBJECT_BODY(type_info));
     MVM_repr_push_o(tc, repr_info, type_info);
 
     /* ...which in turn contains this type... */
@@ -200,11 +199,7 @@ static void compose(MVMThreadContext *tc, MVMCallsite *callsite, MVMRegister *ar
     /* ...then an array of hashes per attribute... */
     attr_info_list = REPR(BOOTArray)->allocate(tc, STABLE(BOOTArray));
     MVM_gc_root_temp_push(tc, (MVMCollectable **)&attr_info_list);
-    REPR(attr_info_list)->initialize(tc, STABLE(attr_info_list), attr_info_list,
-        OBJECT_BODY(attr_info_list));
     MVM_repr_push_o(tc, type_info, attr_info_list);
-    attributes = ((MVMKnowHOWREPR *)self)->body.attributes;
-    MVM_gc_root_temp_push(tc, (MVMCollectable **)&attributes);
     num_attrs = REPR(attributes)->elems(tc, STABLE(attributes),
         attributes, OBJECT_BODY(attributes));
     for (i = 0; i < num_attrs; i++) {
@@ -245,7 +240,7 @@ static void compose(MVMThreadContext *tc, MVMCallsite *callsite, MVMRegister *ar
     MVM_repr_compose(tc, type_obj, repr_info_hash);
 
     /* Clear temporary roots. */
-    MVM_gc_root_temp_pop_n(tc, 10);
+    MVM_gc_root_temp_pop_n(tc, 9);
 
     /* Return type object. */
     MVM_args_set_result_obj(tc, type_obj, MVM_RETURN_CURRENT_FRAME);
@@ -285,25 +280,23 @@ static void add_knowhow_how_method(MVMThreadContext *tc, MVMKnowHOWREPR *knowhow
         tc->instance->VMString, name);
 
     /* Allocate a BOOTCCode and put pointer in. */
-    BOOTCCode = tc->instance->boot_types->BOOTCCode;
+    BOOTCCode = tc->instance->boot_types.BOOTCCode;
     code_obj = REPR(BOOTCCode)->allocate(tc, STABLE(BOOTCCode));
     ((MVMCFunction *)code_obj)->body.func = func;
 
     /* Add into the table. */
     method_table = knowhow_how->body.methods;
-    REPR(method_table)->ass_funcs->bind_key_boxed(tc, STABLE(method_table),
+    REPR(method_table)->ass_funcs.bind_key_boxed(tc, STABLE(method_table),
         method_table, OBJECT_BODY(method_table), name_str, code_obj);
 }
 
 /* Bootstraps the KnowHOW type. */
 static void bootstrap_KnowHOW(MVMThreadContext *tc) {
     MVMObject *VMString  = tc->instance->VMString;
-    MVMObject *BOOTArray = tc->instance->boot_types->BOOTArray;
-    MVMObject *BOOTHash  = tc->instance->boot_types->BOOTHash;
 
     /* Create our KnowHOW type object. Note we don't have a HOW just yet, so
      * pass in NULL. */
-    MVMREPROps *REPR    = MVM_repr_get_by_id(tc, MVM_REPR_ID_KnowHOWREPR);
+    const MVMREPROps *REPR    = MVM_repr_get_by_id(tc, MVM_REPR_ID_KnowHOWREPR);
     MVMObject  *knowhow = REPR->type_object_for(tc, NULL);
 
     /* We create a KnowHOW instance that can describe itself. This means
@@ -372,7 +365,7 @@ static void add_meta_object(MVMThreadContext *tc, MVMObject *type_obj, char *nam
 static void attr_new(MVMThreadContext *tc, MVMCallsite *callsite, MVMRegister *args) {
     MVMObject   *self, *obj;
     MVMArgInfo   type_arg, name_arg, bt_arg;
-    MVMREPROps  *repr;
+    const MVMREPROps  *repr;
 
     /* Process arguments. */
     MVMArgProcContext arg_ctx; arg_ctx.named_used = NULL;
@@ -385,7 +378,6 @@ static void attr_new(MVMThreadContext *tc, MVMCallsite *callsite, MVMRegister *a
     MVM_args_proc_cleanup(tc, &arg_ctx);
 
     /* Anchor all the things. */
-    MVM_gc_root_temp_push(tc, (MVMCollectable **)&self);
     MVM_gc_root_temp_push(tc, (MVMCollectable **)&name_arg);
     MVM_gc_root_temp_push(tc, (MVMCollectable **)&type_arg);
 
@@ -399,7 +391,7 @@ static void attr_new(MVMThreadContext *tc, MVMCallsite *callsite, MVMRegister *a
     ((MVMKnowHOWAttributeREPR *)obj)->body.box_target = bt_arg.exists ? bt_arg.arg.i64 : 0;
 
     /* Return produced object. */
-    MVM_gc_root_temp_pop_n(tc, 3);
+    MVM_gc_root_temp_pop_n(tc, 2);
     MVM_args_set_result_obj(tc, obj, MVM_RETURN_CURRENT_FRAME);
 }
 
@@ -456,7 +448,7 @@ static void attr_box_target(MVMThreadContext *tc, MVMCallsite *callsite, MVMRegi
 static void create_KnowHOWAttribute(MVMThreadContext *tc) {
     MVMObject      *knowhow_how, *meta_obj, *type_obj;
     MVMString      *name_str;
-    MVMREPROps     *repr;
+    const MVMREPROps     *repr;
 
     /* Create meta-object. */
     meta_obj = MVM_repr_alloc_init(tc, STABLE(tc->instance->KnowHOW)->HOW);
@@ -490,21 +482,19 @@ static void create_KnowHOWAttribute(MVMThreadContext *tc) {
 static MVMObject * boot_typed_array(MVMThreadContext *tc, char *name, MVMObject *type) {
     MVMBoolificationSpec *bs;
     MVMObject  *repr_info;
-    MVMREPROps *repr  = MVM_repr_get_by_id(tc, MVM_REPR_ID_MVMArray);
+    const MVMREPROps *repr  = MVM_repr_get_by_id(tc, MVM_REPR_ID_MVMArray);
     MVMObject  *array = repr->type_object_for(tc, NULL);
     MVMROOT(tc, array, {
         /* Give it a meta-object. */
         add_meta_object(tc, array, name);
 
         /* Now need to compose it with the specified type. */
-        repr_info = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTHash);
+        repr_info = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTHash);
         MVMROOT(tc, repr_info, {
-            MVMObject *arr_info = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTHash);
-            MVMROOT(tc, arr_info, {
-                MVM_repr_bind_key_boxed(tc, repr_info, str_array, arr_info);
-                MVM_repr_bind_key_boxed(tc, arr_info, str_type, type);
-                REPR(array)->compose(tc, STABLE(array), repr_info);
-            });
+            MVMObject *arr_info = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTHash);
+            MVM_repr_bind_key_boxed(tc, arr_info, str_type, type);
+            MVM_repr_bind_key_boxed(tc, repr_info, str_array, arr_info);
+            MVM_repr_compose(tc, array, repr_info);
         });
 
         /* Also give it a boolification spec. */
@@ -519,29 +509,41 @@ static MVMObject * boot_typed_array(MVMThreadContext *tc, char *name, MVMObject 
 /* Sets up the core serialization context. It is marked as the SC of various
  * rooted objects, which means in turn it will never be collected. */
 static void setup_core_sc(MVMThreadContext *tc) {
-    MVMString *handle;
-    MVMSerializationContext *sc;
+    MVMString *handle = MVM_string_ascii_decode_nt(tc,
+        tc->instance->VMString, "__6MODEL_CORE__");
+    MVMSerializationContext * const sc = (MVMSerializationContext *)MVM_sc_create(tc, handle);
+    MVMint32 obj_index = 0;
+    MVMint32 st_index  = 0;
 
-    handle = MVM_string_ascii_decode_nt(tc, tc->instance->VMString, "__6MODEL_CORE__");
-    sc = (MVMSerializationContext *)MVM_sc_create(tc, handle);
-
-#define knowhow_init(tc, sc, index, variable) do { \
-    MVM_sc_set_object(tc, sc, index, variable); \
+#define add_to_sc_with_st(tc, sc, variable) do { \
+    MVM_sc_set_object(tc, sc, obj_index++, variable); \
     MVM_sc_set_obj_sc(tc, variable, sc); \
-    MVM_sc_set_stable(tc, sc, index, STABLE(variable)); \
+    MVM_sc_set_stable(tc, sc, st_index++, STABLE(variable)); \
     MVM_sc_set_stable_sc(tc, STABLE(variable), sc); \
 } while (0)
+#define add_to_sc_with_st_and_mo(tc, sc, variable) do { \
+    add_to_sc_with_st(tc, sc, variable); \
+    MVM_sc_set_object(tc, sc, obj_index++, STABLE(variable)->HOW); \
+    MVM_sc_set_obj_sc(tc, STABLE(variable)->HOW, sc); \
+} while (0)
 
-    MVMROOT(tc, sc, {
-        /* KnowHOW */
-        knowhow_init(tc, sc, 0, tc->instance->KnowHOW);
+    /* KnowHOW */
+    add_to_sc_with_st(tc, sc, tc->instance->KnowHOW);
 
-        /* KnowHOW.HOW */
-        knowhow_init(tc, sc, 1, STABLE(tc->instance->KnowHOW)->HOW);
+    /* KnowHOW.HOW */
+    add_to_sc_with_st(tc, sc, STABLE(tc->instance->KnowHOW)->HOW);
 
-        /* KnowHOWAttribute */
-        knowhow_init(tc, sc, 2, tc->instance->KnowHOWAttribute);
-    });
+    /* KnowHOWAttribute */
+    add_to_sc_with_st(tc, sc, tc->instance->KnowHOWAttribute);
+
+    /* BOOT* */
+    add_to_sc_with_st_and_mo(tc, sc, tc->instance->boot_types.BOOTArray);
+    add_to_sc_with_st_and_mo(tc, sc, tc->instance->boot_types.BOOTHash);
+    add_to_sc_with_st_and_mo(tc, sc, tc->instance->boot_types.BOOTIter);
+    add_to_sc_with_st_and_mo(tc, sc, tc->instance->boot_types.BOOTInt);
+    add_to_sc_with_st_and_mo(tc, sc, tc->instance->boot_types.BOOTNum);
+    add_to_sc_with_st_and_mo(tc, sc, tc->instance->boot_types.BOOTStr);
+    add_to_sc_with_st_and_mo(tc, sc, tc->instance->boot_types.BOOTCode);
 }
 
 /* Drives the overall bootstrap process. */
@@ -558,7 +560,7 @@ void MVM_6model_bootstrap(MVMThreadContext *tc) {
      * BOOTCode, BOOTThread, BOOTIter, BOOTContext, SCRef, Lexotic,
      * CallCapture, BOOTIO and BOOTException types. */
 #define create_stub_boot_type(tc, reprid, slot, makeboolspec, boolspec) do { \
-    MVMREPROps *repr = MVM_repr_get_by_id(tc, reprid); \
+    const MVMREPROps *repr = MVM_repr_get_by_id(tc, reprid); \
     MVMObject *type = tc->instance->slot = repr->type_object_for(tc, NULL); \
     if (makeboolspec) { \
         MVMBoolificationSpec *bs; \
@@ -568,23 +570,23 @@ void MVM_6model_bootstrap(MVMThreadContext *tc) {
         type->st->boolification_spec = bs; \
     } \
 } while (0)
-    create_stub_boot_type(tc, MVM_REPR_ID_P6int, boot_types->BOOTInt, 1, MVM_BOOL_MODE_UNBOX_INT);
-    create_stub_boot_type(tc, MVM_REPR_ID_P6num, boot_types->BOOTNum, 1, MVM_BOOL_MODE_UNBOX_NUM);
-    create_stub_boot_type(tc, MVM_REPR_ID_P6str, boot_types->BOOTStr, 1, MVM_BOOL_MODE_UNBOX_STR_NOT_EMPTY_OR_ZERO);
-    create_stub_boot_type(tc, MVM_REPR_ID_MVMArray, boot_types->BOOTArray, 1, MVM_BOOL_MODE_HAS_ELEMS);
-    create_stub_boot_type(tc, MVM_REPR_ID_MVMHash, boot_types->BOOTHash, 1, MVM_BOOL_MODE_HAS_ELEMS);
-    create_stub_boot_type(tc, MVM_REPR_ID_MVMCFunction, boot_types->BOOTCCode, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
-    create_stub_boot_type(tc, MVM_REPR_ID_MVMCode, boot_types->BOOTCode, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
-    create_stub_boot_type(tc, MVM_REPR_ID_MVMThread, boot_types->BOOTThread, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
-    create_stub_boot_type(tc, MVM_REPR_ID_MVMIter, boot_types->BOOTIter, 1, MVM_BOOL_MODE_ITER);
-    create_stub_boot_type(tc, MVM_REPR_ID_MVMContext, boot_types->BOOTContext, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
+    create_stub_boot_type(tc, MVM_REPR_ID_P6int, boot_types.BOOTInt, 1, MVM_BOOL_MODE_UNBOX_INT);
+    create_stub_boot_type(tc, MVM_REPR_ID_P6num, boot_types.BOOTNum, 1, MVM_BOOL_MODE_UNBOX_NUM);
+    create_stub_boot_type(tc, MVM_REPR_ID_P6str, boot_types.BOOTStr, 1, MVM_BOOL_MODE_UNBOX_STR_NOT_EMPTY_OR_ZERO);
+    create_stub_boot_type(tc, MVM_REPR_ID_MVMArray, boot_types.BOOTArray, 1, MVM_BOOL_MODE_HAS_ELEMS);
+    create_stub_boot_type(tc, MVM_REPR_ID_MVMHash, boot_types.BOOTHash, 1, MVM_BOOL_MODE_HAS_ELEMS);
+    create_stub_boot_type(tc, MVM_REPR_ID_MVMCFunction, boot_types.BOOTCCode, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
+    create_stub_boot_type(tc, MVM_REPR_ID_MVMCode, boot_types.BOOTCode, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
+    create_stub_boot_type(tc, MVM_REPR_ID_MVMThread, boot_types.BOOTThread, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
+    create_stub_boot_type(tc, MVM_REPR_ID_MVMIter, boot_types.BOOTIter, 1, MVM_BOOL_MODE_ITER);
+    create_stub_boot_type(tc, MVM_REPR_ID_MVMContext, boot_types.BOOTContext, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
     create_stub_boot_type(tc, MVM_REPR_ID_SCRef, SCRef, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
     create_stub_boot_type(tc, MVM_REPR_ID_Lexotic, Lexotic, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
     create_stub_boot_type(tc, MVM_REPR_ID_MVMCallCapture, CallCapture, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
-    create_stub_boot_type(tc, MVM_REPR_ID_MVMOSHandle, boot_types->BOOTIO, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
-    create_stub_boot_type(tc, MVM_REPR_ID_MVMException, boot_types->BOOTException, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
-    create_stub_boot_type(tc, MVM_REPR_ID_MVMStaticFrame, boot_types->BOOTStaticFrame, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
-    create_stub_boot_type(tc, MVM_REPR_ID_MVMCompUnit, boot_types->BOOTCompUnit, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
+    create_stub_boot_type(tc, MVM_REPR_ID_MVMOSHandle, boot_types.BOOTIO, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
+    create_stub_boot_type(tc, MVM_REPR_ID_MVMException, boot_types.BOOTException, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
+    create_stub_boot_type(tc, MVM_REPR_ID_MVMStaticFrame, boot_types.BOOTStaticFrame, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
+    create_stub_boot_type(tc, MVM_REPR_ID_MVMCompUnit, boot_types.BOOTCompUnit, 0, MVM_BOOL_MODE_NOT_TYPE_OBJECT);
 
     /* Set up some strings. */
 #define string_creator(tc, variable, name) do { \
@@ -609,37 +611,37 @@ void MVM_6model_bootstrap(MVMThreadContext *tc) {
     MVM_gc_root_add_permanent((tc), (MVMCollectable **)&(tc)->instance->slot); \
 } while (0)
     meta_objectifier(tc, VMString, "VMString");
-    meta_objectifier(tc, boot_types->BOOTInt, "BOOTInt");
-    meta_objectifier(tc, boot_types->BOOTNum, "BOOTNum");
-    meta_objectifier(tc, boot_types->BOOTStr, "BOOTStr");
-    meta_objectifier(tc, boot_types->BOOTArray, "BOOTArray");
-    meta_objectifier(tc, boot_types->BOOTHash, "BOOTHash");
-    meta_objectifier(tc, boot_types->BOOTCCode, "BOOTCCode");
-    meta_objectifier(tc, boot_types->BOOTCode, "BOOTCode");
-    meta_objectifier(tc, boot_types->BOOTThread, "BOOTThread");
-    meta_objectifier(tc, boot_types->BOOTIter, "BOOTIter");
-    meta_objectifier(tc, boot_types->BOOTContext, "BOOTContext");
+    meta_objectifier(tc, boot_types.BOOTInt, "BOOTInt");
+    meta_objectifier(tc, boot_types.BOOTNum, "BOOTNum");
+    meta_objectifier(tc, boot_types.BOOTStr, "BOOTStr");
+    meta_objectifier(tc, boot_types.BOOTArray, "BOOTArray");
+    meta_objectifier(tc, boot_types.BOOTHash, "BOOTHash");
+    meta_objectifier(tc, boot_types.BOOTCCode, "BOOTCCode");
+    meta_objectifier(tc, boot_types.BOOTCode, "BOOTCode");
+    meta_objectifier(tc, boot_types.BOOTThread, "BOOTThread");
+    meta_objectifier(tc, boot_types.BOOTIter, "BOOTIter");
+    meta_objectifier(tc, boot_types.BOOTContext, "BOOTContext");
     meta_objectifier(tc, SCRef, "SCRef");
     meta_objectifier(tc, Lexotic, "Lexotic");
     meta_objectifier(tc, CallCapture, "CallCapture");
-    meta_objectifier(tc, boot_types->BOOTIO, "BOOTIO");
-    meta_objectifier(tc, boot_types->BOOTException, "BOOTException");
-    meta_objectifier(tc, boot_types->BOOTStaticFrame, "BOOTStaticFrame");
-    meta_objectifier(tc, boot_types->BOOTCompUnit, "BOOTCompUnit");
+    meta_objectifier(tc, boot_types.BOOTIO, "BOOTIO");
+    meta_objectifier(tc, boot_types.BOOTException, "BOOTException");
+    meta_objectifier(tc, boot_types.BOOTStaticFrame, "BOOTStaticFrame");
+    meta_objectifier(tc, boot_types.BOOTCompUnit, "BOOTCompUnit");
 
     /* Create the KnowHOWAttribute type. */
     create_KnowHOWAttribute(tc);
 
     /* Bootstrap typed arrays. */
-    tc->instance->boot_types->BOOTIntArray = boot_typed_array(tc, "BOOTIntArray",
-        tc->instance->boot_types->BOOTInt);
-    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&tc->instance->boot_types->BOOTIntArray);
-    tc->instance->boot_types->BOOTNumArray = boot_typed_array(tc, "BOOTNumArray",
-        tc->instance->boot_types->BOOTNum);
-    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&tc->instance->boot_types->BOOTNumArray);
-    tc->instance->boot_types->BOOTStrArray = boot_typed_array(tc, "BOOTStrArray",
-        tc->instance->boot_types->BOOTStr);
-    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&tc->instance->boot_types->BOOTStrArray);
+    tc->instance->boot_types.BOOTIntArray = boot_typed_array(tc, "BOOTIntArray",
+        tc->instance->boot_types.BOOTInt);
+    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&tc->instance->boot_types.BOOTIntArray);
+    tc->instance->boot_types.BOOTNumArray = boot_typed_array(tc, "BOOTNumArray",
+        tc->instance->boot_types.BOOTNum);
+    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&tc->instance->boot_types.BOOTNumArray);
+    tc->instance->boot_types.BOOTStrArray = boot_typed_array(tc, "BOOTStrArray",
+        tc->instance->boot_types.BOOTStr);
+    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&tc->instance->boot_types.BOOTStrArray);
 
     /* Get initial __6MODEL_CORE__ serialization context set up. */
     setup_core_sc(tc);

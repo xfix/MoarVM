@@ -375,7 +375,7 @@ MVMString * MVM_string_substring(MVMThreadContext *tc, MVMString *a, MVMint64 of
         end_pos = agraphs;
 
     if (start_pos == end_pos)
-        return tc->instance->str_consts->empty;
+        return tc->instance->str_consts.empty;
 
     MVM_gc_root_temp_push(tc, (MVMCollectable **)&a);
     result = (MVMString *)REPR(a)->allocate(tc, STABLE(a));
@@ -697,7 +697,7 @@ case_change_func(MVM_string_lc, MVM_unicode_case_change_type_lower, "lc needs a 
 case_change_func(MVM_string_tc, MVM_unicode_case_change_type_title, "tc needs a concrete string")
 
 /* decodes a C buffer to an MVMString, dependent on the encoding type flag */
-MVMString * MVM_decode_C_buffer_to_string(MVMThreadContext *tc,
+MVMString * MVM_string_decode(MVMThreadContext *tc,
         MVMObject *type_object, char *Cbuf, MVMint64 byte_length, MVMint64 encoding_flag) {
 
     /* someday make 0 mean "try really hard to detect the encoding */
@@ -716,7 +716,7 @@ MVMString * MVM_decode_C_buffer_to_string(MVMThreadContext *tc,
 }
 
 /* encodes an MVMString to a C buffer, dependent on the encoding type flag */
-MVMuint8 * MVM_encode_string_to_C_buffer(MVMThreadContext *tc, MVMString *s, MVMint64 start, MVMint64 length, MVMuint64 *output_size, MVMint64 encoding_flag) {
+MVMuint8 * MVM_string_encode(MVMThreadContext *tc, MVMString *s, MVMint64 start, MVMint64 length, MVMuint64 *output_size, MVMint64 encoding_flag) {
     switch(encoding_flag) {
         case MVM_encoding_type_utf8:
             return MVM_string_utf8_encode_substr(tc, s, output_size, start, length);
@@ -768,7 +768,7 @@ MVMObject * MVM_string_split(MVMThreadContext *tc, MVMString *separator, MVMStri
                 /* Gather an empty string if the delimiter is found at the end. */
                 if (sep_length && start == end) {
                     MVMObject *pobj = MVM_repr_alloc_init(tc, hll->str_box_type);
-                    MVM_repr_set_str(tc, pobj, tc->instance->str_consts->empty);
+                    MVM_repr_set_str(tc, pobj, tc->instance->str_consts.empty);
                     MVM_repr_push_o(tc, result, pobj);
                 }
             }
@@ -1137,7 +1137,7 @@ void MVM_string_cclass_init(MVMThreadContext *tc) {
 
 /* Checks if the character at the specified offset is a member of the
  * indicated character class. */
-MVMint64 MVM_string_iscclass(MVMThreadContext *tc, MVMint64 cclass, MVMString *s, MVMint64 offset) {
+MVMint64 MVM_string_is_cclass(MVMThreadContext *tc, MVMint64 cclass, MVMString *s, MVMint64 offset) {
     switch (cclass) {
         case MVM_CCLASS_ANY:
             return 1;
@@ -1228,7 +1228,7 @@ MVMint64 MVM_string_iscclass(MVMThreadContext *tc, MVMint64 cclass, MVMString *s
 }
 
 /* Searches for the next char that is in the specified character class. */
-MVMint64 MVM_string_findcclass(MVMThreadContext *tc, MVMint64 cclass, MVMString *s, MVMint64 offset, MVMint64 count) {
+MVMint64 MVM_string_find_cclass(MVMThreadContext *tc, MVMint64 cclass, MVMString *s, MVMint64 offset, MVMint64 count) {
     MVMint64 length = NUM_GRAPHS(s);
     MVMint64 end    = offset + count;
     MVMint64 pos;
@@ -1236,14 +1236,14 @@ MVMint64 MVM_string_findcclass(MVMThreadContext *tc, MVMint64 cclass, MVMString 
     end = length < end ? length : end;
 
     for (pos = offset; pos < end; pos++)
-        if (MVM_string_iscclass(tc, cclass, s, pos) > 0)
+        if (MVM_string_is_cclass(tc, cclass, s, pos) > 0)
             return pos;
 
     return end;
 }
 
 /* Searches for the next char that is not in the specified character class. */
-MVMint64 MVM_string_findnotcclass(MVMThreadContext *tc, MVMint64 cclass, MVMString *s, MVMint64 offset, MVMint64 count) {
+MVMint64 MVM_string_find_not_cclass(MVMThreadContext *tc, MVMint64 cclass, MVMString *s, MVMint64 offset, MVMint64 count) {
     MVMint64 length = NUM_GRAPHS(s);
     MVMint64 end    = offset + count;
     MVMint64 pos;
@@ -1251,7 +1251,7 @@ MVMint64 MVM_string_findnotcclass(MVMThreadContext *tc, MVMint64 cclass, MVMStri
     end = length < end ? length : end;
 
     for (pos = offset; pos < end; pos++)
-        if (MVM_string_iscclass(tc, cclass, s, pos) == 0)
+        if (MVM_string_is_cclass(tc, cclass, s, pos) == 0)
             return pos;
 
     return end;
@@ -1261,7 +1261,7 @@ static MVMint16   encoding_name_init   = 0;
 static MVMString *encoding_utf8_name   = NULL;
 static MVMString *encoding_ascii_name  = NULL;
 static MVMString *encoding_latin1_name = NULL;
-MVMuint8 MVM_find_encoding_by_name(MVMThreadContext *tc, MVMString *name) {
+MVMuint8 MVM_string_find_encoding(MVMThreadContext *tc, MVMString *name) {
     if (!encoding_name_init) {
         encoding_utf8_name   = MVM_string_ascii_decode_nt(tc, tc->instance->VMString, "utf8");
         MVM_gc_root_add_permanent(tc, (MVMCollectable **)&encoding_utf8_name);

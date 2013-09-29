@@ -74,7 +74,7 @@ void MVM_gc_mark_thread_unblocked(MVMThreadContext *tc) {
     while (!MVM_try_mark_unblocked(tc, tc, gc_status)) {
         /* We can't, presumably because a GC run is going on. We should wait
          * for that to finish before we go on, but without chewing CPU. */
-        MVM_platform_yield();
+        MVM_platform_thread_yield();
     }
 }
 
@@ -244,7 +244,7 @@ void MVM_gc_global_destruction(MVMThreadContext *tc) {
             /* Now we need to join the GC run if some other thread
              * has signaled us. */
             GC_SYNC_POINT(tc);
-            MVM_platform_yield();
+        MVM_platform_thread_yield();
         } while (tc->instance->num_user_threads);
         /* must run once again to actually destroy them... */
         force_full_gc(tc);

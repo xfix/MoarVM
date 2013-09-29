@@ -14,6 +14,9 @@ struct MVMExceptionBody {
 
     /* Where was the exception thrown from? */
     MVMFrame *origin;
+
+    /* Offset into the frame's bytecode, for resumption. */
+    MVMuint32 goto_offset;
 };
 struct MVMException {
     MVMObject common;
@@ -21,4 +24,4 @@ struct MVMException {
 };
 
 /* Function for REPR setup. */
-MVMREPROps * MVMException_initialize(MVMThreadContext *tc);
+const MVMREPROps * MVMException_initialize(MVMThreadContext *tc);

@@ -1,17 +1,15 @@
 #include "moarvm.h"
 
 /* This representation's function pointer table. */
-static MVMREPROps *this_repr;
+static const MVMREPROps this_repr;
 
 /* Creates a new type object of this representation, and associates it with
  * the given HOW. */
 static MVMObject * type_object_for(MVMThreadContext *tc, MVMObject *HOW) {
-    MVMSTable *st;
-    MVMObject *obj;
+    MVMSTable *st = MVM_gc_allocate_stable(tc, &this_repr, HOW);
 
-    st = MVM_gc_allocate_stable(tc, this_repr, HOW);
     MVMROOT(tc, st, {
-        obj = MVM_gc_allocate_type_object(tc, st);
+        MVMObject *obj = MVM_gc_allocate_type_object(tc, st);
         MVM_ASSIGN_REF(tc, st, st->WHAT, obj);
         st->size = sizeof(MVMNFA);
     });
@@ -24,10 +22,6 @@ static MVMObject * allocate(MVMThreadContext *tc, MVMSTable *st) {
     return MVM_gc_allocate_object(tc, st);
 }
 
-/* Initializes a new instance. */
-static void initialize(MVMThreadContext *tc, MVMSTable *st, MVMObject *root, void *data) {
-}
-
 /* Copies the body of one object to another. */
 static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, MVMObject *dest_root, void *dest) {
     MVM_exception_throw_adhoc(tc, "Cannot copy object with representation NFA");
@@ -37,9 +31,9 @@ static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, MVMObject *d
 static void gc_mark(MVMThreadContext *tc, MVMSTable *st, void *data, MVMGCWorklist *worklist) {
     MVMNFABody *lb = (MVMNFABody *)data;
     MVMint64 i, j;
-    
+
     MVM_gc_worklist_add(tc, worklist, &lb->fates);
-    
+
     for (i = 0; i < lb->num_states; i++) {
         MVMint64 edges = lb->num_state_edges[i];
         for (j = 0; j < edges; j++) {
@@ -72,6 +66,99 @@ static MVMStorageSpec get_storage_spec(MVMThreadContext *tc, MVMSTable *st) {
     return spec;
 }
 
+/* Serializes the data. */
+static void serialize(MVMThreadContext *tc, MVMSTable *st, void *data, MVMSerializationWriter *writer) {
+    MVMNFABody *body = (MVMNFABody *)data;
+    MVMint64 i, j;
+
+    /* Write fates. */
+    writer->write_ref(tc, writer, body->fates);
+
+    /* Write number of states. */
+    writer->write_int(tc, writer, body->num_states);
+
+    /* Write state edge list counts. */
+    for (i = 0; i < body->num_states; i++)
+        writer->write_int(tc, writer, body->num_state_edges[i]);
+
+    /* Write state graph. */
+    for (i = 0; i < body->num_states; i++) {
+        for (j = 0; j < body->num_state_edges[i]; j++) {
+            writer->write_int(tc, writer, body->states[i][j].act);
+            writer->write_int(tc, writer, body->states[i][j].to);
+            switch (body->states[i][j].act) {
+                case MVM_NFA_EDGE_FATE:
+                case MVM_NFA_EDGE_CODEPOINT:
+                case MVM_NFA_EDGE_CODEPOINT_NEG:
+                case MVM_NFA_EDGE_CHARCLASS:
+                case MVM_NFA_EDGE_CHARCLASS_NEG:
+                    writer->write_int(tc, writer, body->states[i][j].arg.i);
+                    break;
+                case MVM_NFA_EDGE_CHARLIST:
+                case MVM_NFA_EDGE_CHARLIST_NEG:
+                    writer->write_str(tc, writer, body->states[i][j].arg.s);
+                    break;
+                case MVM_NFA_EDGE_CODEPOINT_I:
+                case MVM_NFA_EDGE_CODEPOINT_I_NEG: {
+                    writer->write_int(tc, writer, body->states[i][j].arg.uclc.lc);
+                    writer->write_int(tc, writer, body->states[i][j].arg.uclc.uc);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/* Deserializes the data. */
+static void deserialize(MVMThreadContext *tc, MVMSTable *st, MVMObject *root, void *data, MVMSerializationReader *reader) {
+    MVMNFABody *body = (MVMNFABody *)data;
+    MVMint64 i, j;
+
+    /* Read fates. */
+    body->fates = reader->read_ref(tc, reader);
+
+    /* Read number of states. */
+    body->num_states = reader->read_int(tc, reader);
+
+    if (body->num_states > 0) {
+        /* Read state edge list counts. */
+        body->num_state_edges = malloc(body->num_states * sizeof(MVMint64));
+        for (i = 0; i < body->num_states; i++)
+            body->num_state_edges[i] = reader->read_int(tc, reader);
+
+        /* Read state graph. */
+        body->states = malloc(body->num_states * sizeof(MVMNFAStateInfo *));
+        for (i = 0; i < body->num_states; i++) {
+            MVMint64 edges = body->num_state_edges[i];
+            if (edges > 0)
+                body->states[i] = malloc(edges * sizeof(MVMNFAStateInfo));
+            for (j = 0; j < edges; j++) {
+                body->states[i][j].act = reader->read_int(tc, reader);
+                body->states[i][j].to = reader->read_int(tc, reader);
+                switch (body->states[i][j].act) {
+                    case MVM_NFA_EDGE_FATE:
+                    case MVM_NFA_EDGE_CODEPOINT:
+                    case MVM_NFA_EDGE_CODEPOINT_NEG:
+                    case MVM_NFA_EDGE_CHARCLASS:
+                    case MVM_NFA_EDGE_CHARCLASS_NEG:
+                        body->states[i][j].arg.i = reader->read_int(tc, reader);
+                        break;
+                    case MVM_NFA_EDGE_CHARLIST:
+                    case MVM_NFA_EDGE_CHARLIST_NEG:
+                        MVM_ASSIGN_REF(tc, root, body->states[i][j].arg.s, reader->read_str(tc, reader));
+                        break;
+                    case MVM_NFA_EDGE_CODEPOINT_I:
+                    case MVM_NFA_EDGE_CODEPOINT_I_NEG: {
+                        body->states[i][j].arg.uclc.lc = reader->read_int(tc, reader);
+                        body->states[i][j].arg.uclc.uc = reader->read_int(tc, reader);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /* Compose the representation. */
 static void compose(MVMThreadContext *tc, MVMSTable *st, MVMObject *info) {
     /* Nothing to do for this REPR. */
@@ -83,23 +170,37 @@ static void deserialize_stable_size(MVMThreadContext *tc, MVMSTable *st, MVMSeri
 }
 
 /* Initializes the representation. */
-MVMREPROps * MVMNFA_initialize(MVMThreadContext *tc) {
-    /* Allocate and populate the representation function table. */
-    if (!this_repr) {
-        this_repr = malloc(sizeof(MVMREPROps));
-        memset(this_repr, 0, sizeof(MVMREPROps));
-        this_repr->type_object_for = type_object_for;
-        this_repr->allocate = allocate;
-        this_repr->initialize = initialize;
-        this_repr->copy_to = copy_to;
-        this_repr->gc_mark = gc_mark;
-        this_repr->gc_free = gc_free;
-        this_repr->get_storage_spec = get_storage_spec;
-        this_repr->compose = compose;
-        this_repr->deserialize_stable_size = deserialize_stable_size;
-    }
-    return this_repr;
+const MVMREPROps * MVMNFA_initialize(MVMThreadContext *tc) {
+    return &this_repr;
 }
+
+static const MVMREPROps this_repr = {
+    type_object_for,
+    allocate,
+    NULL, /* initialize */
+    copy_to,
+    MVM_REPR_DEFAULT_ATTR_FUNCS,
+    MVM_REPR_DEFAULT_BOX_FUNCS,
+    MVM_REPR_DEFAULT_POS_FUNCS,
+    MVM_REPR_DEFAULT_ASS_FUNCS,
+    MVM_REPR_DEFAULT_ELEMS,
+    get_storage_spec,
+    NULL, /* change_type */
+    serialize,
+    deserialize,
+    NULL, /* serialize_repr_data */
+    NULL, /* deserialize_repr_data */
+    deserialize_stable_size,
+    gc_mark,
+    gc_free,
+    NULL, /* gc_cleanup */
+    NULL, /* gc_mark_repr_data */
+    NULL, /* gc_free_repr_data */
+    compose,
+    "NFA", /* name */
+    MVM_REPR_ID_NFA,
+    0, /* refs_frames */
+};
 
 MVMObject * MVM_nfa_from_statelist(MVMThreadContext *tc, MVMObject *states, MVMObject *nfa_type) {
     MVMObject  *nfa_obj;
@@ -307,12 +408,12 @@ static MVMint64 * nqp_nfa_run(MVMThreadContext *tc, MVMNFABody *nfa, MVMString *
                 }
                 else if (act == MVM_NFA_EDGE_CHARCLASS) {
                     MVMint64 arg = edge_info[i].arg.i;
-                    if (MVM_string_iscclass(tc, arg, target, offset))
+                    if (MVM_string_is_cclass(tc, arg, target, offset))
                         nextst[numnext++] = to;
                 }
                 else if (act == MVM_NFA_EDGE_CHARCLASS_NEG) {
                     MVMint64 arg = edge_info[i].arg.i;
-                    if (!MVM_string_iscclass(tc, arg, target, offset))
+                    if (!MVM_string_is_cclass(tc, arg, target, offset))
                         nextst[numnext++] = to;
                 }
                 else if (act == MVM_NFA_EDGE_CHARLIST) {
@@ -376,7 +477,7 @@ MVMObject * MVM_nfa_run_proto(MVMThreadContext *tc, MVMObject *nfa, MVMString *t
     MVMint64 *fates = nqp_nfa_run(tc, (MVMNFABody *)OBJECT_BODY(nfa), target, offset, &total_fates);
 
     /* Copy results into an integer array. */
-    MVMObject *fateres = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTIntArray);
+    MVMObject *fateres = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTIntArray);
     for (i = 0; i < total_fates; i++)
         MVM_repr_bind_pos_i(tc, fateres, i, fates[i]);
     free(fates);

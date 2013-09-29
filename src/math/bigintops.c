@@ -77,7 +77,7 @@ static void from_num(MVMnum64 d, mp_int *a) {
 }
 
 static mp_int * get_bigint(MVMThreadContext *tc, MVMObject *obj) {
-    return (mp_int *)REPR(obj)->box_funcs->get_boxed_ref(tc, STABLE(obj), obj,
+    return (mp_int *)REPR(obj)->box_funcs.get_boxed_ref(tc, STABLE(obj), obj,
         OBJECT_BODY(obj), MVM_REPR_ID_P6bigint);
 }
 
@@ -401,7 +401,7 @@ MVMObject * MVM_bigint_radix(MVMThreadContext *tc, MVMint64 radix, MVMString *st
     }
 
     /* initialize the object */
-    result = MVM_repr_alloc_init(tc, tc->instance->boot_types->BOOTArray);
+    result = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTArray);
 
     MVM_repr_push_o(tc, result, value_obj);
     MVM_repr_push_o(tc, result, base_obj);

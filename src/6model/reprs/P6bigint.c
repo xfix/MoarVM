@@ -1,12 +1,12 @@
 #include "moarvm.h"
 
 /* This representation's function pointer table. */
-static MVMREPROps *this_repr;
+static const MVMREPROps this_repr;
 
 /* Creates a new type object of this representation, and associates it with
  * the given HOW. */
 static MVMObject * type_object_for(MVMThreadContext *tc, MVMObject *HOW) {
-    MVMSTable *st  = MVM_gc_allocate_stable(tc, this_repr, HOW);
+    MVMSTable *st  = MVM_gc_allocate_stable(tc, &this_repr, HOW);
 
     MVMROOT(tc, st, {
         MVMObject *obj = MVM_gc_allocate_type_object(tc, st);
@@ -60,22 +60,6 @@ static MVMint64 get_int(MVMThreadContext *tc, MVMSTable *st, MVMObject *root, vo
     }
 }
 
-static void set_num(MVMThreadContext *tc, MVMSTable *st, MVMObject *root, void *data, MVMnum64 value) {
-    MVM_exception_throw_adhoc(tc,
-        "P6bigint representation cannot box a native num");
-}
-static MVMnum64 get_num(MVMThreadContext *tc, MVMSTable *st, MVMObject *root, void *data) {
-    MVM_exception_throw_adhoc(tc,
-        "P6bigint representation cannot unbox to a native num");
-}
-static void set_str(MVMThreadContext *tc, MVMSTable *st, MVMObject *root, void *data, MVMString *value) {
-    MVM_exception_throw_adhoc(tc,
-        "P6bigint representation cannot box a native string");
-}
-static MVMString * get_str(MVMThreadContext *tc, MVMSTable *st, MVMObject *root, void *data) {
-    MVM_exception_throw_adhoc(tc,
-        "P6bigint representation cannot unbox to a native string");
-}
 static void * get_boxed_ref(MVMThreadContext *tc, MVMSTable *st, MVMObject *root, void *data, MVMuint32 repr_id) {
     if (repr_id == MVM_REPR_ID_P6bigint)
         return &((MVMP6bigintBody *)data)->i;
@@ -99,22 +83,69 @@ static void compose(MVMThreadContext *tc, MVMSTable *st, MVMObject *info) {
     /* Nothing to do for this REPR. */
 }
 
-/* Initializes the representation. */
-MVMREPROps * MVMP6bigint_initialize(MVMThreadContext *tc) {
-    this_repr = malloc(sizeof(MVMREPROps));
-    memset(this_repr, 0, sizeof(MVMREPROps));
-    this_repr->type_object_for = type_object_for;
-    this_repr->allocate = allocate;
-    this_repr->copy_to = copy_to;
-    this_repr->get_storage_spec = get_storage_spec;
-    this_repr->box_funcs = malloc(sizeof(MVMREPROps_Boxing));
-    this_repr->box_funcs->set_int = set_int;
-    this_repr->box_funcs->get_int = get_int;
-    this_repr->box_funcs->set_num = set_num;
-    this_repr->box_funcs->get_num = get_num;
-    this_repr->box_funcs->set_str = set_str;
-    this_repr->box_funcs->get_str = get_str;
-    this_repr->box_funcs->get_boxed_ref = get_boxed_ref;
-    this_repr->compose = compose;
-    return this_repr;
+/* Serializes the bigint. */
+static void serialize(MVMThreadContext *tc, MVMSTable *st, void *data, MVMSerializationWriter *writer) {
+    mp_int *i = &((MVMP6bigintBody *)data)->i;
+    int len;
+    char *buf;
+    MVMString *str;
+    mp_radix_size(i, 10, &len);
+    buf = (char *)malloc(len);
+    mp_toradix(i, buf, 10);
+
+    /* len - 1 because buf is \0-terminated */
+    str = MVM_string_ascii_decode(tc, tc->instance->VMString, buf, len - 1);
+
+    writer->write_str(tc, writer, str);
+    free(buf);
 }
+
+/* Deserializes the bigint. */
+static void deserialize(MVMThreadContext *tc, MVMSTable *st, MVMObject *root, void *data, MVMSerializationReader *reader) {
+    MVMP6bigintBody *body = (MVMP6bigintBody *)data;
+    MVMuint64 output_size;
+    const char *buf = MVM_string_ascii_encode(tc, reader->read_str(tc, reader), &output_size);
+    mp_init(&body->i);
+    mp_read_radix(&body->i, buf, 10);
+}
+
+/* Initializes the representation. */
+const MVMREPROps * MVMP6bigint_initialize(MVMThreadContext *tc) {
+    return &this_repr;
+}
+
+static const MVMREPROps this_repr = {
+    type_object_for,
+    allocate,
+    initialize,
+    copy_to,
+    MVM_REPR_DEFAULT_ATTR_FUNCS,
+    {
+        set_int,
+        get_int,
+        MVM_REPR_DEFAULT_SET_NUM,
+        MVM_REPR_DEFAULT_GET_NUM,
+        MVM_REPR_DEFAULT_SET_STR,
+        MVM_REPR_DEFAULT_GET_STR,
+        get_boxed_ref
+    },    /* box_funcs */
+    MVM_REPR_DEFAULT_POS_FUNCS,
+    MVM_REPR_DEFAULT_ASS_FUNCS,
+    MVM_REPR_DEFAULT_ELEMS,
+    get_storage_spec,
+    NULL, /* change_type */
+    serialize,
+    deserialize,
+    NULL, /* serialize_repr_data */
+    NULL, /* deserialize_repr_data */
+    NULL, /* deserialize_stable_size */
+    NULL, /* gc_mark */
+    NULL, /* gc_free */
+    NULL, /* gc_cleanup */
+    NULL, /* gc_mark_repr_data */
+    NULL, /* gc_free_repr_data */
+    compose,
+    "P6bigint", /* name */
+    MVM_REPR_ID_P6bigint,
+    0, /* refs_frames */
+};

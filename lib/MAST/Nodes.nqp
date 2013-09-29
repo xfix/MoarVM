@@ -9,13 +9,13 @@ use MASTOps;
 
 # The base class for all nodes.
 class MAST::Node {
-    method DUMP($indent = "") {
+    method dump($indent = "") {
         my @lines := nqp::list();
-        self.DUMP_lines(@lines, $indent);
+        self.dump_lines(@lines, $indent);
         nqp::join("\n", @lines);
     }
 
-    method DUMP_lines(@lines, $indent) {
+    method dump_lines(@lines, $indent) {
         nqp::push(@lines, $indent~"MAST::Node <null>");
     }
 }
@@ -51,8 +51,8 @@ class MAST::CompUnit is MAST::Node {
         @!frames[+@!frames] := $frame;
     }
 
-    method DUMP_lines(@lines, $indent) {
-        nqp::push(@lines, $_.DUMP($indent)) for @!frames;
+    method dump_lines(@lines, $indent) {
+        nqp::push(@lines, $_.dump($indent)) for @!frames;
     }
 
     method hll($hll?) {
@@ -189,32 +189,43 @@ class MAST::Frame is MAST::Node {
     method cuuid() { $!cuuid }
     method name() { $!name }
 
-    method DUMP_lines(@lines, $indent) {
-        nqp::push(@lines, $indent~"MAST::Frame name: $!name, cuuid: $!cuuid");
+    method dump_lines(@lines, $indent) {
+        nqp::push(@lines, $indent~"MAST::Frame name<$!name>, cuuid<$!cuuid>");
         if !nqp::chars($indent) {
+            my $lex;
             my $x := 0;
-            my $lex := "$indent Lexical types: ";
-            $lex := $lex ~ $x++ ~ ": " ~ get_typename($_) ~ ", " for @!lexical_types;
-            nqp::push(@lines, $lex);
-            $x := 0;
-            $lex := "$indent Lexical names: ";
-            $lex := $lex ~ $x++ ~ ": $_, " for @!lexical_names;
-            nqp::push(@lines, $lex);
-            $x := 0;
-            my $locals := "$indent Local types: ";
-            $locals := $locals ~ $x++ ~ ": " ~ get_typename($_) ~ ", " for @!local_types;
+            my $locals := "$indent  Local types: ";
+            $locals := $locals ~ $x++ ~ "<" ~ get_typename($_) ~ ">, " for @!local_types;
             nqp::push(@lines, $locals);
-            $lex := "$indent Lexical map: ";
-            $lex := "$lex$_: " ~ %!lexical_map{$_} ~ " " for %!lexical_map;
-            nqp::push(@lines, $lex);
-            nqp::push(@lines, "$indent Outer: " ~ (
+            if nqp::elems(@!lexical_types) {
+                $x := 0;
+                $lex := "$indent  Lexical types: ";
+                $lex := $lex ~ $x++ ~ "<" ~ get_typename($_) ~ ">, " for @!lexical_types;
+                nqp::push(@lines, $lex);
+            }
+            if nqp::elems(@!lexical_names) {
+                $x := 0;
+                $lex := "$indent  Lexical names: ";
+                $lex := $lex ~ $x++ ~ "<$_>, " for @!lexical_names;
+                nqp::push(@lines, $lex);
+            }
+            if nqp::elems(%!lexical_map) {
+                $lex := "$indent  Lexical map: ";
+                $lex := "$lex$_" ~ '<' ~ %!lexical_map{$_} ~ '>, ' for %!lexical_map;
+                nqp::push(@lines, $lex);
+            }
+            nqp::push(@lines, "$indent  Outer: " ~ (
                 $!outer && $!outer.cuuid ne $!cuuid
-                ?? "name: " ~ $!outer.name ~ ", cuuid: "~$!outer.cuuid
+                ?? "name<" ~ $!outer.name ~ ">, cuuid<"~$!outer.cuuid ~ '>'
                 !! "<none>"
             ));
-            nqp::push(@lines, "$indent Instructions:");
+            nqp::push(@lines, "$indent  Instructions:");
             $x := 0;
-            nqp::push(@lines, $x++~': '~$_.DUMP($indent ~ '  ')) for @!instructions;
+            for @!instructions {
+                my $prefix := $indent ~ '  [' ~ $x++ ~ '] ';
+                nqp::push(@lines, $prefix ~ $_.dump($indent));
+            }
+            nqp::push(@lines, '');
         }
     }
 }
@@ -226,7 +237,7 @@ class MAST::Op is MAST::Node {
     has @!operands;
 
     my %op_codes := MAST::Ops.WHO<%codes>;
-    my @op_names := MAST::Ops.WHO<@codes>;
+    my @op_names := MAST::Ops.WHO<@names>;
     method new(:$op!, *@operands) {
         my $obj := nqp::create(self);
         nqp::bindattr_i($obj, MAST::Op, '$!op', %op_codes{$op});
@@ -237,10 +248,10 @@ class MAST::Op is MAST::Node {
     method op() { $!op }
     method operands() { @!operands }
 
-    method DUMP_lines(@lines, $indent) {
+    method dump_lines(@lines, $indent) {
         my $opname := @op_names[$!op];
-        nqp::push(@lines, $indent~"MAST::Op: $opname, operands:");
-        nqp::push(@lines, $_.DUMP($indent ~ '  ')) for @!operands;
+        nqp::push(@lines, $indent~"MAST::Op $opname");
+        nqp::push(@lines, $_.dump($indent ~ '    ')) for @!operands;
     }
 }
 
@@ -254,9 +265,9 @@ class MAST::SVal is MAST::Node {
         $obj
     }
 
-    method DUMP_lines(@lines, $indent) {
+    method dump_lines(@lines, $indent) {
         # XXX: escape line breaks and such...
-        nqp::push(@lines, $indent~"MAST::SVal: value: $!value");
+        nqp::push(@lines, $indent~"MAST::SVal value<$!value>");
     }
 }
 class MAST::IVal is MAST::Node {
@@ -277,8 +288,8 @@ class MAST::IVal is MAST::Node {
         $obj
     }
 
-    method DUMP_lines(@lines, $indent) {
-        nqp::push(@lines, $indent~"MAST::IVal: value: $!value, size: $!size, signed: $!signed");
+    method dump_lines(@lines, $indent) {
+        nqp::push(@lines, $indent~"MAST::IVal value<$!value>, size<$!size>, signed<$!signed>");
     }
 }
 class MAST::NVal is MAST::Node {
@@ -295,8 +306,8 @@ class MAST::NVal is MAST::Node {
         $obj
     }
 
-    method DUMP_lines(@lines, $indent) {
-        nqp::push(@lines, $indent~"MAST::NVal: value: $!value, size: $!size");
+    method dump_lines(@lines, $indent) {
+        nqp::push(@lines, $indent~"MAST::NVal value<$!value>, size<$!size>");
     }
 }
 
@@ -313,8 +324,8 @@ class MAST::Label is MAST::Node {
 
     method name() { $!name }
 
-    method DUMP_lines(@lines, $indent) {
-        nqp::push(@lines, $indent~"MAST::Label: name: $!name");
+    method dump_lines(@lines, $indent) {
+        nqp::push(@lines, $indent~"MAST::Label name<$!name>");
     }
 }
 
@@ -330,8 +341,8 @@ class MAST::Local is MAST::Node {
 
     method index() { $!index }
 
-    method DUMP_lines(@lines, $indent) {
-        nqp::push(@lines, $indent~"MAST::Local: index: $!index");
+    method dump_lines(@lines, $indent) {
+        nqp::push(@lines, $indent~"MAST::Local index<$!index>");
     }
 }
 
@@ -349,8 +360,8 @@ class MAST::Lexical is MAST::Node {
 
     method index() { $!index }
 
-    method DUMP_lines(@lines, $indent) {
-        nqp::push(@lines, $indent~"MAST::Lexical: index: $!index, frames_out: $!frames_out");
+    method dump_lines(@lines, $indent) {
+        nqp::push(@lines, $indent~"MAST::Lexical index<$!index>, frames_out<$!frames_out>");
     }
 }
 
@@ -398,14 +409,15 @@ class MAST::Call is MAST::Node {
         }
     }
 
-    method DUMP_lines(@lines, $indent) {
-        nqp::push(@lines, $indent~"MAST::Call: target:");
-        nqp::push(@lines, $!target.DUMP($indent ~ '  '));
-        nqp::push(@lines, "$indent result:");
-        nqp::push(@lines, $!result.DUMP($indent ~ '  '));
-        nqp::push(@lines, "$indent flags:");
+    method dump_lines(@lines, $indent) {
+        nqp::push(@lines, $indent~"MAST::Call");
+        nqp::push(@lines, "$indent  target:");
+        nqp::push(@lines, $!target.dump($indent ~ '    '));
+        nqp::push(@lines, "$indent  result:");
+        nqp::push(@lines, $!result.dump($indent ~ '    '));
+        nqp::push(@lines, "$indent  flags:");
         for @!flags -> $flag {
-            my $str := "$indent ";
+            my $str := "$indent   ";
             if $flag +& $Arg::named {
                 $str := $str ~ " named";
             }
@@ -424,8 +436,8 @@ class MAST::Call is MAST::Node {
             $str := $str ~ " str" if $flag +& $Arg::str;
             nqp::push(@lines, $str);
         }
-        nqp::push(@lines, "$indent args:");
-        nqp::push(@lines, $_.DUMP($indent ~ '  ')) for @!args;
+        nqp::push(@lines, "$indent  args:");
+        nqp::push(@lines, $_.dump($indent ~ '    ')) for @!args;
     }
 }
 
@@ -443,9 +455,9 @@ class MAST::Annotated is MAST::Node {
         $obj
     }
 
-    method DUMP_lines(@lines, $indent) {
+    method dump_lines(@lines, $indent) {
         nqp::push(@lines, $indent~"MAST::Annotated: file: $!file, line: $!line, instructions:");
-        nqp::push(@lines, $_.DUMP($indent ~ '  ')) for @!instructions;
+        nqp::push(@lines, $_.dump($indent ~ '  ')) for @!instructions;
     }
 }
 

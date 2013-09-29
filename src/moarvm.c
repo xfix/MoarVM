@@ -16,7 +16,6 @@ MVMInstance * MVM_vm_create_instance(void) {
 
     /* Set up instance data structure. */
     instance = calloc(1, sizeof(MVMInstance));
-    instance->boot_types = calloc(1, sizeof(MVMBootTypes));
 
     /* Create the main thread's ThreadContext and stash it. */
     instance->main_thread = MVM_tc_create(instance);
@@ -31,6 +30,9 @@ MVMInstance * MVM_vm_create_instance(void) {
     instance->alloc_permroots = 16;
     instance->permroots       = malloc(sizeof(MVMCollectable **) * instance->alloc_permroots);
     init_mutex(instance->mutex_permroots, "permanent roots");
+
+    /* Set up REPR registry mutex. */
+    init_mutex(instance->mutex_repr_registry, "REPR registry");
 
     /* Set up HLL config mutex. */
     init_mutex(instance->mutex_hllconfigs, "hll configs");
@@ -57,19 +59,19 @@ MVMInstance * MVM_vm_create_instance(void) {
      * linked list. */
     MVM_store(&instance->threads,
         (instance->main_thread->thread_obj = (MVMThread *)
-            REPR(instance->boot_types->BOOTThread)->allocate(
-                instance->main_thread, STABLE(instance->boot_types->BOOTThread))));
+            REPR(instance->boot_types.BOOTThread)->allocate(
+                instance->main_thread, STABLE(instance->boot_types.BOOTThread))));
     instance->threads->body.stage = MVM_thread_stage_started;
     instance->threads->body.tc = instance->main_thread;
 
     /* Create compiler registry */
-    instance->compiler_registry = MVM_repr_alloc_init(instance->main_thread, instance->boot_types->BOOTHash);
+    instance->compiler_registry = MVM_repr_alloc_init(instance->main_thread, instance->boot_types.BOOTHash);
 
     /* Set up compiler registr mutex. */
     init_mutex(instance->mutex_compiler_registry, "compiler registry");
 
     /* Create hll symbol tables */
-    instance->hll_syms = MVM_repr_alloc_init(instance->main_thread, instance->boot_types->BOOTHash);
+    instance->hll_syms = MVM_repr_alloc_init(instance->main_thread, instance->boot_types.BOOTHash);
 
     /* Set up hll symbol tables mutex. */
     init_mutex(instance->mutex_hll_syms, "hll syms");
@@ -85,25 +87,23 @@ MVMInstance * MVM_vm_create_instance(void) {
 
 /* Sets up some string constants. */
 static void string_consts(MVMThreadContext *tc) {
-    MVMStringConsts *s = malloc(sizeof(MVMStringConsts));
+    MVMInstance * const instance = tc->instance;
 
-    s->empty = MVM_string_ascii_decode_nt(tc, tc->instance->VMString, "");
-    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&s->empty);
+    instance->str_consts.empty = MVM_string_ascii_decode_nt(tc, tc->instance->VMString, "");
+    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&instance->str_consts.empty);
 
-    s->Str = MVM_string_ascii_decode_nt(tc, tc->instance->VMString, "Str");
-    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&s->Str);
+    instance->str_consts.Str = MVM_string_ascii_decode_nt(tc, tc->instance->VMString, "Str");
+    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&instance->str_consts.Str);
 
-    s->Num = MVM_string_ascii_decode_nt(tc, tc->instance->VMString, "Num");
-    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&s->Num);
-
-    tc->instance->str_consts = s;
+    instance->str_consts.Num = MVM_string_ascii_decode_nt(tc, tc->instance->VMString, "Num");
+    MVM_gc_root_add_permanent(tc, (MVMCollectable **)&instance->str_consts.Num);
 }
 
 /* This callback is passed to the interpreter code. It takes care of making
  * the initial invocation. */
 static void toplevel_initial_invoke(MVMThreadContext *tc, void *data) {
     /* Dummy, 0-arg callsite. */
-    static MVMCallsite no_arg_callsite = { NULL, 0, 0 };
+    static MVMCallsite no_arg_callsite = { NULL, 0, 0, 0 };
 
     /* Create initial frame, which sets up all of the interpreter state also. */
     MVM_frame_invoke(tc, (MVMStaticFrame *)data, &no_arg_callsite, NULL, NULL, NULL);
@@ -146,21 +146,40 @@ void MVM_vm_dump_file(MVMInstance *instance, const char *filename) {
 /* Destroys a VM instance. This must be called only from
  * the main thread. */
 void MVM_vm_destroy_instance(MVMInstance *instance) {
-    MVMuint16 i;
-
     /* Run the GC global destruction phase. After this,
      * no 6model object pointers should be accessed. */
     MVM_gc_global_destruction(instance->main_thread);
 
-    /* Free various instance-wide storage. */
-    MVM_checked_free_null(instance->boot_types);
-    MVM_checked_free_null(instance->str_consts);
-    MVM_checked_free_null(instance->repr_registry);
-    MVM_HASH_DESTROY(hash_handle, MVMREPRHashEntry, instance->repr_name_to_id_hash);
+    /* Cleanup REPR registry */
+    uv_mutex_destroy(&instance->mutex_repr_registry);
+    MVM_HASH_DESTROY(hash_handle, MVMReprRegistry, instance->repr_hash);
+    MVM_checked_free_null(instance->repr_list);
 
     /* Clean up GC permanent roots related resources. */
     uv_mutex_destroy(&instance->mutex_permroots);
     MVM_checked_free_null(instance->permroots);
+
+    /* Clean up Hash of HLLConfig. */
+    uv_mutex_destroy(&instance->mutex_hllconfigs);
+    MVM_HASH_DESTROY(hash_handle, MVMHLLConfig, instance->hll_configs);
+
+    /* Clean up Hash of all known serialization contexts. */
+    uv_mutex_destroy(&instance->mutex_sc_weakhash);
+    MVM_HASH_DESTROY(hash_handle, MVMSerializationContextBody, instance->sc_weakhash);
+
+    /* Clean up Hash of filenames of compunits loaded from disk. */
+    uv_mutex_destroy(&instance->mutex_loaded_compunits);
+    MVM_HASH_DESTROY(hash_handle, MVMLoadedCompUnitName, instance->loaded_compunits);
+
+    /* Clean up Container registry. */
+    uv_mutex_destroy(&instance->mutex_container_registry);
+    MVM_HASH_DESTROY(hash_handle, MVMContainerRegistry, instance->container_registry);
+
+    /* Clean up Hash of compiler objects keyed by name. */
+    uv_mutex_destroy(&instance->mutex_compiler_registry);
+
+    /* Clean up Hash of hashes of symbol tables per hll. */
+    uv_mutex_destroy(&instance->mutex_hll_syms);
 
     /* Destroy main thread contexts. */
     MVM_tc_destroy(instance->main_thread);

@@ -491,5 +491,7 @@ static const void * const LABELS[] = {
     &&OP_popcompsc,
     &&OP_shell,
     &&OP_cwd,
-    &&OP_seed
+    &&OP_seed,
+    &&OP_rethrow,
+    &&OP_resume
 };
