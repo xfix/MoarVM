@@ -135,7 +135,7 @@ void MVM_gc_enter_from_allocator(MVMThreadContext *tc) {
      * the last GC run. */
     while (    MVM_load(&tc->instance->gc_ack)
             && !MVM_load(&tc->instance->gc_start))
-        MVM_platform_yield();
+        MVM_platform_thread_yield();
 
     /* Try to start the GC run. We first must be able to interrupt ourself,
      * since if we increment gc_start first, there could be a race from
@@ -221,7 +221,7 @@ void MVM_gc_enter_from_interrupt(MVMThreadContext *tc) {
      * the last GC run. */
     while (    MVM_load(&tc->instance->gc_ack)
             && !MVM_load(&tc->instance->gc_start))
-        MVM_platform_yield();
+        MVM_platform_thread_yield();
 
     register_for_gc_run(tc);
     MVM_gc_run_gc(tc, MVMGCWhatToDo_NoInstance);
@@ -244,7 +244,7 @@ void MVM_gc_global_destruction(MVMThreadContext *tc) {
             /* Now we need to join the GC run if some other thread
              * has signaled us. */
             GC_SYNC_POINT(tc);
-        MVM_platform_thread_yield();
+            MVM_platform_thread_yield();
         } while (tc->instance->num_user_threads);
         /* must run once again to actually destroy them... */
         force_full_gc(tc);
