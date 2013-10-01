@@ -193,6 +193,11 @@ void MVM_gc_enter_from_allocator(MVMThreadContext *tc) {
         } while ((thread_obj = thread_obj->body.next));
 
         MVM_gc_run_gc(tc, MVMGCWhatToDo_All);
+
+        /* Free any STables that have been marked for deletion. It's okay for
+         * us to muck around in another thread's fromspace while it's mutating
+         * tospace, really. */
+        MVM_gc_collect_free_stables(tc);
     }
     else {
         /* Another thread beat us to starting the GC sync process. Thus, act as
