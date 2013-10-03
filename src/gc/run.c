@@ -296,11 +296,18 @@ static void cleanup_gc_run(MVMThreadContext *tc, MVMuint8 gen) {
 /* XXX TODO explore the feasability of doing this in a background
  * finalizer/destructor thread and letting the main thread(s) continue
  * on their merry way(s). */
-static void post_run_frees_and_cleanups(MVMThreadContext *tc, void *limit, MVMuint8 gen) {
+static void post_run_frees_and_cleanups(MVMThreadContext *tc, void *limit, MVMuint8 what_to_do, MVMuint8 gen) {
     MVMThread *thread_obj = tc->thread_obj;
 
     MVM_gc_collect_free_nursery_uncopied(tc, limit);
     reset_gc_status(tc);
+
+    if (what_to_do == MVMGCWhatToDo_All) {
+        /* Free any STables that have been marked for deletion. It's okay for
+         * us to muck around in another thread's fromspace while it's mutating
+         * tospace, really. */
+        MVM_gc_collect_free_stables(tc);
+    }
 
     if (gen == MVMGCGenerations_Both) {
         GCDEBUG_LOG(tc, MVM_GC_DEBUG_ORCHESTRATE, "freeing gen2\n");
@@ -313,12 +320,12 @@ static void post_run_frees_and_cleanups(MVMThreadContext *tc, void *limit, MVMui
 }
 
 /* Now we're all done, it's safe to finalize any objects that need it. */
-static void finalize_objects(MVMThreadContext *tc, MVMuint8 gen) {
+static void finalize_objects(MVMThreadContext *tc, MVMuint8 what_to_do, MVMuint8 gen) {
     MVMuint32  i;
 
     for (i = 0; i < tc->gc_work_count; i++)
         post_run_frees_and_cleanups(tc->gc_work[i].tc,
-            tc->gc_work[i].limit, gen);
+            tc->gc_work[i].limit, what_to_do, gen);
 }
 
 static void acknowledge_finish(MVMThreadContext *tc) {
@@ -359,7 +366,7 @@ void MVM_gc_run_gc(MVMThreadContext *tc, MVMuint8 what_to_do) {
 
     /* Wait for everybody to agree we're done. */
     collect_intrays(tc, gen);
-    finalize_objects(tc, gen);
+    finalize_objects(tc, what_to_do, gen);
     cleanup_gc_run(tc, gen);
     acknowledge_finish(tc);
 }
