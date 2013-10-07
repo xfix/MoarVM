@@ -1,4 +1,4 @@
-#include "moarvm.h"
+#include "moar.h"
 
 #define P6OMAX(x, y) ((y) > (x) ? (y) : (x))
 #define REFVAR_VM_HASH_STR_VAR 10
@@ -164,6 +164,12 @@ static void gc_free(MVMThreadContext *tc, MVMObject *obj) {
         MVMuint16  offset = repr_data->attribute_offsets[repr_data->gc_cleanup_slots[i]];
         MVMSTable *st     = repr_data->flattened_stables[repr_data->gc_cleanup_slots[i]];
         st->REPR->gc_cleanup(tc, st, (char *)data + offset);
+    }
+    
+    /* If we replaced the object body, free the replacement. */
+    if (((MVMP6opaque *)obj)->body.replaced) {
+        free(((MVMP6opaque *)obj)->body.replaced);
+        ((MVMP6opaque *)obj)->body.replaced = NULL;
     }
 }
 

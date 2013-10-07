@@ -1,4 +1,4 @@
-#include "moarvm.h"
+#include "moar.h"
 #include <platform/threads.h>
 
 /* If we have the job of doing GC for a thread, we add it to our work
@@ -187,6 +187,7 @@ void MVM_gc_enter_from_allocator(MVMThreadContext *tc) {
         } while ((thread_obj = thread_obj->body.next));
 
         MVM_gc_run_gc(tc, MVMGCWhatToDo_All);
+
     }
     else {
         /* Another thread beat us to starting the GC sync process. Thus, act as

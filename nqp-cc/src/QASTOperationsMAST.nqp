@@ -484,7 +484,7 @@ for <if unless> -> $op_name {
         # value to be passed.
         my @comp_ops;
         sub needs_cond_passed($n) {
-            nqp::istype($n, QAST::Block) && $n.arity > 0 && 
+            nqp::istype($n, QAST::Block) && $n.arity > 0 &&
                 ($n.blocktype eq 'immediate' || $n.blocktype eq 'immediate_static')
         }
         my $cond_temp_lbl := needs_cond_passed($op[1]) || needs_cond_passed($op[2])
@@ -986,6 +986,7 @@ QAST::MASTOperations.add_core_op('call', sub ($qastcomp, $op) {
         $callee := $qastcomp.as_mast(QAST::Var.new( :name($op.name), :scope('lexical') ));
     }
     elsif +@args {
+        @args := nqp::clone(@args);
         $callee := $qastcomp.as_mast(@args.shift());
     }
     else {
@@ -1735,6 +1736,9 @@ QAST::MASTOperations.add_core_moarop_mapping('shift_i', 'shift_i');
 QAST::MASTOperations.add_core_moarop_mapping('shift_n', 'shift_n');
 QAST::MASTOperations.add_core_moarop_mapping('shift_s', 'shift_s');
 QAST::MASTOperations.add_core_moarop_mapping('splice', 'splice');
+QAST::MASTOperations.add_core_moarop_mapping('isint', 'isint');
+QAST::MASTOperations.add_core_moarop_mapping('isnum', 'isnum');
+QAST::MASTOperations.add_core_moarop_mapping('isstr', 'isstr');
 QAST::MASTOperations.add_core_moarop_mapping('islist', 'islist');
 QAST::MASTOperations.add_core_moarop_mapping('ishash', 'ishash');
 QAST::MASTOperations.add_core_moarop_mapping('iterator', 'iter');
@@ -1864,6 +1868,10 @@ QAST::MASTOperations.add_core_moarop_mapping('getcurhllsym', 'getcurhllsym');
 QAST::MASTOperations.add_core_moarop_mapping('bindcurhllsym', 'bindcurhllsym');
 QAST::MASTOperations.add_core_moarop_mapping('sethllconfig', 'sethllconfig');
 QAST::MASTOperations.add_core_moarop_mapping('loadbytecode', 'loadbytecode');
+QAST::MASTOperations.add_core_moarop_mapping('settypehll', 'settypehll', 0);
+QAST::MASTOperations.add_core_moarop_mapping('settypehllrole', 'settypehllrole', 0);
+QAST::MASTOperations.add_core_moarop_mapping('usecompileehllconfig', 'usecompileehllconfig');
+QAST::MASTOperations.add_core_moarop_mapping('usecompilerhllconfig', 'usecompilerhllconfig');
 
 # regex engine related opcodes
 QAST::MASTOperations.add_core_moarop_mapping('nfafromstatelist', 'nfafromstatelist');

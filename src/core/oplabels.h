@@ -369,6 +369,9 @@ static const void * const LABELS[] = {
     &&OP_elems,
     &&OP_null_s,
     &&OP_newtype,
+    &&OP_isint,
+    &&OP_isnum,
+    &&OP_isstr,
     &&OP_islist,
     &&OP_ishash,
     &&OP_iter,
@@ -496,5 +499,9 @@ static const void * const LABELS[] = {
     &&OP_cwd,
     &&OP_seed,
     &&OP_rethrow,
-    &&OP_resume
+    &&OP_resume,
+    &&OP_settypehll,
+    &&OP_settypehllrole,
+    &&OP_usecompileehllconfig,
+    &&OP_usecompilerhllconfig
 };

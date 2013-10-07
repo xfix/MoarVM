@@ -1,4 +1,4 @@
-#include <moarvm.h>
+#include <moar.h>
 #include <sha1.h>
 
 #ifndef MAX
@@ -326,7 +326,7 @@ static void write_obj_ref(MVMThreadContext *tc, MVMSerializationWriter *writer, 
     if (OBJ_IS_NULL(SC_OBJ(ref))) {
         /* This object doesn't belong to an SC yet, so it must be serialized as part of
          * this compilation unit. Add it to the work list. */
-        SC_OBJ(ref) = writer->root.sc;
+        MVM_sc_set_obj_sc(tc, ref, writer->root.sc);
         MVM_repr_push_o(tc, writer->objects_list, ref);
     }
     sc_id = get_sc_id(tc, writer, SC_OBJ(ref));
@@ -728,7 +728,7 @@ static MVMString * concatenate_outputs(MVMThreadContext *tc, MVMSerializationWri
             "Serialization error: failed to convert to base64");
 
     /* Make a MVMString containing it. */
-    result = MVM_string_ascii_decode_nt(tc, tc->instance->boot_types.BOOTStr, output_b64);
+    result = MVM_string_ascii_decode_nt(tc, tc->instance->VMString, output_b64);
     free(output_b64);
     return result;
 }
@@ -946,7 +946,7 @@ static void serialize(MVMThreadContext *tc, MVMSerializationWriter *writer) {
 
         /* Serialize any STables on the todo list. */
         while (writer->stables_list_pos < stables_todo) {
-            serialize_stable(tc, writer, writer->stables_list[writer->stables_list_pos]);
+            serialize_stable(tc, writer, writer->root.sc->body->root_stables[writer->stables_list_pos]);
             writer->stables_list_pos++;
             work_todo = 1;
         }
@@ -986,7 +986,6 @@ MVMString * MVM_serialization_serialize(MVMThreadContext *tc, MVMSerializationCo
     writer                      = calloc(1, sizeof(MVMSerializationWriter));
     writer->root.version        = CURRENT_VERSION;
     writer->root.sc             = sc;
-    writer->stables_list        = sc->body->root_stables;
     writer->objects_list        = sc->body->root_objects;
     writer->codes_list          = sc->body->root_codes;
     writer->contexts_list       = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTArray);
@@ -1219,6 +1218,9 @@ static MVMObject * read_array_var(MVMThreadContext *tc, MVMSerializationReader *
     /* Read in the elements. */
     for (i = 0; i < elems; i++)
         MVM_repr_bind_pos_o(tc, result, i, read_ref_func(tc, reader));
+
+    /* Set the SC. */
+    MVM_sc_set_obj_sc(tc, result, reader->root.sc);
 
     return result;
 }
@@ -1803,7 +1805,12 @@ void MVM_serialization_deserialize(MVMThreadContext *tc, MVMSerializationContext
     reader->codes_list = codes_static;
     scodes = (MVMint32)MVM_repr_elems(tc, codes_static);
 
-    /* TODO: Mark all the static code refs we've been provided with as static. */
+    /* Mark all the static code refs we've been provided with as static. */
+     for (i = 0; i < scodes; i++) {
+        MVMObject *scr = MVM_repr_at_pos_o(tc, reader->codes_list, i);
+        ((MVMCode *)scr)->body.is_static = 1;
+        MVM_sc_set_obj_sc(tc, scr, sc);
+    }
 
     /* During deserialization, we allocate directly in generation 2. This
      * is because these objects are almost certainly going to be long lived,

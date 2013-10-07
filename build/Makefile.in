@@ -1,11 +1,14 @@
-CC    = @cc@
-LD    = @ld@
-AR    = @ar@
-MAKE  = @make@ @mkflags@
-PERL  = @perl@
-RM    = @rm@
-CAT   = @cat@
-SHELL = @sh@
+CC     = @cc@
+LD     = @ld@
+AR     = @ar@
+MAKE   = @make@ @mkflags@
+PERL   = @perl@
+RM     = @rm@
+CAT    = @cat@
+SHELL  = @sh@
+CP     = $(PERL) -MExtUtils::Command -e cp
+MKPATH = $(PERL) -MExtUtils::Command -e mkpath
+CHMOD  = $(PERL) -MExtUtils::Command -e chmod
 
 CONFIG    = @config@
 ADDCONFIG =
@@ -21,6 +24,7 @@ NOERR =
 
 @mknoisy@
 
+PREFIX    = @prefix@
 CFLAGS    = @cflags@ @ccdef@MVM_TRACING=$(TRACING) @ccdef@MVM_CGOTO=$(CGOTO)
 CINCLUDES = @ccinc@3rdparty/libuv/include \
             @ccinc@3rdparty/libuv/src \
@@ -115,10 +119,10 @@ OBJECTS = src/core/args@obj@ \
           src/strings/latin1@obj@ \
           src/strings/utf16@obj@ \
           src/math/bigintops@obj@ \
-          src/moarvm@obj@ \
+          src/moar@obj@ \
           @platform@
 
-HEADERS = src/moarvm.h \
+HEADERS = src/moar.h \
           src/types.h \
           src/bithacks.h \
           src/6model/6model.h \
@@ -252,7 +256,15 @@ THIRDPARTY = @thirdpartylibs@
 
 .SUFFIXES: .c @obj@
 
-all: moarvm@exe@
+all: moar@exe@
+
+install: all
+	$(MKPATH) $(PREFIX)/bin
+	$(CP) moar@exe@ $(PREFIX)/bin
+	$(CHMOD) 755 $(PREFIX)/bin/moar@exe@
+	$(MKPATH) $(PREFIX)/lib/MAST
+	$(CP) lib/MAST/Nodes.nqp $(PREFIX)/lib/MAST
+	$(CP) lib/MAST/Ops.nqp $(PREFIX)/lib/MAST
 
 lib: @moar@
 
@@ -269,7 +281,7 @@ reconfig: realclean
 clangcheck gcccheck:
 	@$(MAKE) --no-print-directory -f tools/check.mk $@
 
-moarvm@exe@: $(MAIN_OBJECTS) @moar@
+moar@exe@: $(MAIN_OBJECTS) @moar@
 	$(MSG) linking $@
 	$(CMD)$(LD) @ldout@$@ $(LDFLAGS) $(MAIN_OBJECTS) $(MAIN_LIBS)
 
@@ -361,7 +373,7 @@ realclean: clean
 
 distclean: realclean
 	$(MSG) remove executable and libraries
-	-$(CMD)$(RM) moarvm@exe@ @moarlib@ @moardll@ $(NOOUT) $(NOERR)
+	-$(CMD)$(RM) moar@exe@ @moarlib@ @moardll@ $(NOOUT) $(NOERR)
 	$(MSG) remove configuration and generated files
 	-$(CMD)$(RM) Makefile src/gen/config.h src/strings/unicode.c tools/check.mk $(NOOUT) $(NOERR)
 

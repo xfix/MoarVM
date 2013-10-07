@@ -1,4 +1,4 @@
-#include "moarvm.h"
+#include "moar.h"
 
 void MVM_gc_worklist_init(MVMThreadContext *tc, MVMGCWorklist *worklist) {
     worklist->items = 0;

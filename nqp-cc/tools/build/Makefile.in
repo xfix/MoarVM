@@ -69,7 +69,7 @@ CROSSCOMPILE    = $(NQP) nqp-moar-cc.nqp --target=mbc --setting=NQPCOREMoar --no
 
 # The cross-compilation of NQP to Moar; we also build Parrot versions of the
 # things being cross-compiled.
-NQPLIBS    = nqp-mo.moarvm ModuleLoader.class NQPCOREMoar.setting.moarvm \
+NQPLIBS    = nqp-mo.moarvm ModuleLoader.moarvm NQPCOREMoar.setting.moarvm \
              QASTNodesMoar.moarvm QRegexMoar.moarvm NQPHLLMoar.moarvm \
              QASTMoar.moarvm NQPP6QRegexMoar.moarvm nqp.moarvm
 NQPLIBPIRS = nqp-mo.pir NQPCOREMoar.setting.pir QASTNodesMoar.pir QRegexMoar.pir \
@@ -140,7 +140,7 @@ QASTRegexCompilerMAST.pbc: MASTNodes.pbc MASTOps.pbc QASTOperationsMAST.pbc src/
 
 .pir.pbc:
 	$(PARROT) -o $@ $*.pir
-    
+
 nqp-src/QASTMoar.nqp: tools/build/moarqast.pl ../lib/MAST/Ops.nqp ../lib/MAST/Nodes.nqp src/QASTRegexCompilerMAST.nqp src/QASTOperationsMAST.nqp src/QASTCompilerMAST.nqp src/SelfHostQASTCompilerMAST.nqp
 	$(PERL) tools/build/moarqast.pl ../lib/MAST/Ops.nqp ../lib/MAST/Nodes.nqp src/QASTRegexCompilerMAST.nqp src/QASTOperationsMAST.nqp src/QASTCompilerMAST.nqp src/SelfHostQASTCompilerMAST.nqp > nqp-src/QASTMoar.nqp
 
@@ -168,10 +168,10 @@ NQPP6QRegexMoar.pir: nqp-src/NQPP6QRegex.nqp QRegexMoar.pbc NQPHLLMoar.pbc QASTM
 nqp-mo.moarvm: nqp-src/nqp-mo.pm nqp-mo.pbc $(CROSS_COMP_PBCS)
 	$(CROSSCOMPILE_NS) nqp-src/nqp-mo.pm
 
-ModuleLoader.class: nqp-src/ModuleLoader.pm $(CROSS_COMP_PBCS)
+ModuleLoader.moarvm: nqp-src/ModuleLoader.pm $(CROSS_COMP_PBCS)
 	$(CROSSCOMPILE_NS) nqp-src/ModuleLoader.pm
 
-NQPCOREMoar.setting.moarvm: nqp-src/NQPCORE.setting NQPCOREMoar.setting.pbc nqp-mo.moarvm ModuleLoader.class $(CROSS_COMP_PBCS)
+NQPCOREMoar.setting.moarvm: nqp-src/NQPCORE.setting NQPCOREMoar.setting.pbc nqp-mo.moarvm ModuleLoader.moarvm $(CROSS_COMP_PBCS)
 	$(CROSSCOMPILE_NS) nqp-src/NQPCORE.setting
 
 QASTNodesMoar.moarvm: nqp-src/QASTNodes.nqp QASTNodesMoar.pbc NQPCOREMoar.setting.moarvm $(CROSS_COMP_PBCS)
@@ -204,7 +204,7 @@ nqptest: all
 	prove -e "$(NQP) nqp-moar-cc.nqp" t/nqp
 
 selftest: all
-	prove -e "../moarvm nqp.moarvm" t/nqp t/serialization
+	prove -e "../moar nqp.moarvm" t/nqp t/serialization
 
 ## cleaning
 
