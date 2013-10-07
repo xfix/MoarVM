@@ -1,4 +1,4 @@
-#include "moarvm.h"
+#include "moar.h"
 
 /* This public-domain C quick sort implementation by Darel Rex Finley. */
 /* for example, quicksort_maker(elements, 100, MVMint64, arr[L], arr[R],
