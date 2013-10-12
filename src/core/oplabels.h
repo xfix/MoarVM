@@ -203,7 +203,8 @@ static const void * const LABELS[] = {
     &&OP_split,
     &&OP_join,
     &&OP_getcpbyname,
-    &&OP_indexat_scb,
+    &&OP_indexat,
+    &&OP_indexnat,
     &&OP_unipropcode,
     &&OP_unipvalcode,
     &&OP_hasuniprop,
@@ -503,5 +504,8 @@ static const void * const LABELS[] = {
     &&OP_settypehll,
     &&OP_settypehllrole,
     &&OP_usecompileehllconfig,
-    &&OP_usecompilerhllconfig
+    &&OP_usecompilerhllconfig,
+    &&OP_encode,
+    &&OP_decode,
+    &&OP_bindhllsym
 };

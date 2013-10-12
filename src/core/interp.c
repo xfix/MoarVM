@@ -63,6 +63,10 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
      * program entry point). */
     initial_invoke(tc, invoke_data);
 
+    /* Set jump point, for if we arrive back in the interpreter from an
+     * exception thrown from C code. */
+    setjmp(tc->interp_jump);
+
     /* Enter runloop. */
     runloop: {
         MVMuint16 op;
@@ -1356,10 +1360,19 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                     GET_REG(cur_op, 2).s);
                 cur_op += 4;
                 goto NEXT;
-            OP(indexat_scb):
+            OP(indexat):
                 /* branches on *failure* to match in the constant string, to save an instruction in regexes */
                 if (MVM_string_char_at_in_string(tc, GET_REG(cur_op, 0).s,
                         GET_REG(cur_op, 2).i64, cu->body.strings[GET_UI16(cur_op, 4)]) >= 0)
+                    cur_op += 10;
+                else
+                    cur_op = bytecode_start + GET_UI32(cur_op, 6);
+                GC_SYNC_POINT(tc);
+                goto NEXT;
+            OP(indexnat):
+                /* branches on *failure* to match in the constant string, to save an instruction in regexes */
+                if (MVM_string_char_at_in_string(tc, GET_REG(cur_op, 0).s,
+                        GET_REG(cur_op, 2).i64, cu->body.strings[GET_UI16(cur_op, 4)]) == -1)
                     cur_op += 10;
                 else
                     cur_op = bytecode_start + GET_UI32(cur_op, 6);
@@ -2398,10 +2411,14 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 MVMObject *value = GET_REG(cur_op, 2).o;
                 MVMROOT(tc, value, {
                     MVMObject *cloned = REPR(value)->allocate(tc, STABLE(value));
-                    MVMROOT(tc, cloned, {
-                        REPR(value)->copy_to(tc, STABLE(value), OBJECT_BODY(value), cloned, OBJECT_BODY(cloned));
-                        GET_REG(cur_op, 0).o = cloned;
-                    });
+                    /* Ordering here matters. We write the object into the
+                     * register before calling copy_to. This is because
+                     * if copy_to allocates, obj may have moved after
+                     * we called it. This saves us having to put things on
+                     * the temporary stack. The GC will know to update it
+                     * in the register if it moved. */
+                    GET_REG(cur_op, 0).o = cloned;
+                    REPR(value)->copy_to(tc, STABLE(value), OBJECT_BODY(value), cloned, OBJECT_BODY(cloned));
                 });
                 cur_op += 4;
                 goto NEXT;
@@ -3426,6 +3443,35 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             OP(usecompilerhllconfig):
                 MVM_hll_leave_compilee_mode(tc);
                 goto NEXT;
+            OP(encode):
+                MVM_string_encode_to_buf(tc, GET_REG(cur_op, 2).s,
+                    GET_REG(cur_op, 4).s, GET_REG(cur_op, 6).o);
+                GET_REG(cur_op, 0).o = GET_REG(cur_op, 6).o;
+                cur_op += 8;
+                goto NEXT;
+            OP(decode):
+                GET_REG(cur_op, 0).s = MVM_string_decode_from_buf(tc,
+                    GET_REG(cur_op, 2).o, GET_REG(cur_op, 4).s);
+                cur_op += 6;
+                goto NEXT;
+            OP(bindhllsym): {
+                MVMObject *syms     = tc->instance->hll_syms;
+                MVMString *hll_name = GET_REG(cur_op, 0).s;
+                MVMObject *hash;
+                uv_mutex_lock(&tc->instance->mutex_hll_syms);
+                hash = MVM_repr_at_key_boxed(tc, syms, hll_name);
+                if (!hash) {
+                    hash = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTHash);
+                    /* must re-get syms and HLL name in case it moved */
+                    syms = tc->instance->hll_syms;
+                    hll_name = GET_REG(cur_op, 0).s;
+                    MVM_repr_bind_key_boxed(tc, syms, hll_name, hash);
+                }
+                MVM_repr_bind_key_boxed(tc, hash, GET_REG(cur_op, 2).s, GET_REG(cur_op, 4).o);
+                uv_mutex_unlock(&tc->instance->mutex_hll_syms);
+                cur_op += 6;
+                goto NEXT;
+            }
 #if !MVM_CGOTO
             default:
                 MVM_panic(MVM_exitcode_invalidopcode, "Invalid opcode executed (corrupt bytecode stream?) opcode %u", *(cur_op-2));

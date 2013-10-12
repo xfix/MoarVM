@@ -222,17 +222,12 @@ indexcp_s           w(int64) r(str) r(int64)
 uc                  w(str) r(str)
 lc                  w(str) r(str)
 tc                  w(str) r(str)
-#buftostr            w(str) r(obj) r(int64)
-#strtobuf            w(obj) r(str) r(int64)
-#decode_s            w(str) r(str) r(int64)
-#decode_b            w(obj) r(obj) r(int64)
-#decode              w(str) r(obj) r(int64)
-#encode              w(obj) r(str) r(int64)
 split               w(obj) r(str) r(str)
 join                w(str) r(str) r(obj)
 #replace             w(str) r(str) r(str) r(str)
 getcpbyname         w(int64) r(str)
-indexat_scb         r(str) r(int64) str ins
+indexat             r(str) r(int64) str ins
+indexnat            r(str) r(int64) str ins
 unipropcode         w(int64) r(str)
 unipvalcode         w(int64) r(int64) r(str)
 hasuniprop          w(int64) r(str) r(int64) r(int64) r(int64)
@@ -558,3 +553,6 @@ settypehll          r(obj) r(str)
 settypehllrole      r(obj) r(int64)
 usecompileehllconfig
 usecompilerhllconfig
+encode              w(obj) r(str) r(str) r(obj)
+decode              w(str) r(obj) r(str)
+bindhllsym          r(str) r(str) r(obj)
