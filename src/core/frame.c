@@ -52,14 +52,10 @@ MVMFrame * MVM_frame_dec_ref(MVMThreadContext *tc, MVMFrame *frame) {
 
         if (node && MVM_load(&node->ref_count) >= MVMFramePoolLengthLimit) {
             /* There's no room on the free list, so destruction.*/
-            if (frame->env) {
-                free(frame->env);
-                frame->env = NULL;
-            }
+            MVM_checked_free_null(frame->env);
             if (frame->work) {
                 MVM_args_proc_cleanup(tc, &frame->params);
-                free(frame->work);
-                frame->work = NULL;
+                MVM_unchecked_free_null(frame->work);
             }
             free(frame);
         }
@@ -125,6 +121,7 @@ void MVM_frame_invoke(MVMThreadContext *tc, MVMStaticFrame *static_frame,
     pool_index = static_frame_body->pool_index;
     node = tc->frame_pool_table[pool_index];
 
+    /* If the frame cache list was empty, malloc a frame. */
     if (node == NULL) {
         fresh = 1;
         frame = malloc(sizeof(MVMFrame));
@@ -201,9 +198,11 @@ void MVM_frame_invoke(MVMThreadContext *tc, MVMStaticFrame *static_frame,
     }
     else {
         frame->outer = NULL;
+        goto skipinc;
     }
     if (frame->outer)
         MVM_frame_inc_ref(tc, frame->outer);
+    skipinc:
 
     /* Caller is current frame in the thread context. */
     if (tc->cur_frame)
@@ -218,7 +217,7 @@ void MVM_frame_invoke(MVMThreadContext *tc, MVMStaticFrame *static_frame,
 
     /* Initialize argument processing. */
     MVM_args_proc_init(tc, &frame->params, callsite, args);
-    
+
     /* Make sure there's no frame context pointer. */
     frame->context_object = NULL;
 

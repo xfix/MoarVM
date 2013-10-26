@@ -66,6 +66,14 @@ struct MVMStaticFrameBody {
 
     /* Cached instruction offsets */
     MVMuint8 *instr_offsets;
+
+#if MVM_HLLLPROF
+    /* Pointers to hit counts of instructions if they exist. */
+    MVMuint32 **hit_count_ptrs;
+
+    /* HLL line-profile hit counts. */
+    MVMuint32 *hit_counts;
+#endif
 };
 struct MVMStaticFrame {
     MVMObject common;

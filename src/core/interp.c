@@ -34,6 +34,9 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
 #include "oplabels.h"
 #endif
 
+    /* annotation hit count */
+    MVMuint32 *annot_hit_count;
+
     /* Points to the current opcode. */
     MVMuint8 *cur_op = NULL;
 
@@ -77,6 +80,16 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             fprintf(stderr, "%s\n", trace_line);
             /* slow tracing is slow. Feel free to speed it. */
             free(trace_line);
+        }
+#endif
+
+#if MVM_HLLLPROF
+        /* if this instruction has an annotation, increment the annotation's
+         * hit counter on the static frame. */
+        if ((annot_hit_count =
+                tc->cur_frame->static_info->body.hit_count_ptrs[
+                    cur_op - *tc->interp_bytecode_start])) {
+            (*annot_hit_count)++;
         }
 #endif
 

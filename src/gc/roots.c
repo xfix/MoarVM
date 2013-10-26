@@ -289,7 +289,8 @@ static void scan_registers(MVMThreadContext *tc, MVMGCWorklist *worklist, MVMFra
                 MVM_gc_worklist_add(tc, worklist, &frame->args[i].s);
                 i++;
             }
-            if (flag_map[flag] & MVM_CALLSITE_ARG_STR || flag_map[flag] & MVM_CALLSITE_ARG_OBJ)
+            if ((flag_map[flag] & MVM_CALLSITE_ARG_STR)
+					|| (flag_map[flag] & MVM_CALLSITE_ARG_OBJ))
                 MVM_gc_worklist_add(tc, worklist, &frame->args[i].o);
         }
     }

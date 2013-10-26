@@ -27,7 +27,7 @@ my @args = @ARGV;
 
 GetOptions(\%args, qw(
     help|?
-    debug! optimize! instrument!
+    debug! optimize! instrument! hlllprof!
     os=s shell=s toolchain=s compiler=s
     cc=s ld=s make=s
     static use-readline
@@ -49,6 +49,7 @@ $args{debug}      //= 0 + !$args{optimize};
 $args{optimize}   //= 0 + !$args{debug};
 $args{instrument} //= 0;
 $args{static}     //= 0;
+$args{hlllprof}   //= 0;
 
 $args{'use-readline'} //= 0;
 $args{'big-endian'}   //= 0;
@@ -70,7 +71,7 @@ $config{config} = join ' ', map { / / ? "\"$_\"" : $_ } @args;
 $config{prefix} = abs_path($args{prefix} // '.');
 
 # set options that take priority over all others
-my @keys = qw( cc ld make );
+my @keys = qw( cc ld make hlllprof );
 @config{@keys} = @args{@keys};
 
 for (keys %defaults) {
@@ -540,6 +541,7 @@ __END__
                    [--cc <cc>] [--ld <ld>] [--make <make>]
                    [--debug] [--optimize] [--instrument]
                    [--static] [--use-readline] [--prefix]
+                   [--hlllprof]
 
     ./Configure.pl --build <build-triple> --host <host-triple>
                    [--cc <cc>] [--ld <ld>] [--make <make>]
@@ -576,7 +578,15 @@ defaults to the opposite of C<--debug>.
 =item --no-instrument
 
 Toggle extra instrumentation flags during compile and link; for example,
-turns on Address Sanitizer when compiling with C<clang>.  Defaults to off.
+turns on Address Sanitizer when compiling with C<clang>, or enables
+Visual Studio profiling when compiling with C<msvc>.  Defaults to off.
+
+=item --hlllprof
+
+=item --no-hlllprof
+
+Toggle profiling of lines of HLL source: enables the --hlllprof flag
+to the moar executable to output line hit counts.  Defaults to off.
 
 =item --os <os>
 

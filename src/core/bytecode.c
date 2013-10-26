@@ -521,7 +521,7 @@ static MVMStaticFrame ** deserialize_frames(MVMThreadContext *tc, MVMCompUnit *c
         {
             MVMuint32 annot_offset = read_int32(pos, 26);
             MVMuint32 num_annotations = read_int32(pos, 30);
-            if (annot_offset + num_annotations * 10 > rs->annotation_size) {
+            if (annot_offset + num_annotations * ANNOTATION_SIZE > rs->annotation_size) {
                 cleanup_all(tc, rs);
                 MVM_exception_throw_adhoc(tc, "Frame annotation segment overflows bytecode stream");
             }
@@ -592,6 +592,21 @@ static MVMStaticFrame ** deserialize_frames(MVMThreadContext *tc, MVMCompUnit *c
         /* Allocate default lexical environment storage. */
         static_frame_body->env_size = static_frame_body->num_lexicals * sizeof(MVMRegister);
         static_frame_body->static_env = calloc(1, static_frame_body->env_size);
+
+#if MVM_HLLLPROF
+        static_frame_body->hit_count_ptrs =
+            calloc(static_frame_body->bytecode_size, sizeof(MVMuint32 *));
+        if (static_frame_body->num_annotations) {
+            MVMuint32 i;
+            static_frame_body->hit_counts =
+                calloc(static_frame_body->num_annotations, sizeof(MVMuint32));
+            for (i = 0; i < static_frame_body->num_annotations; i++) {
+                MVMBytecodeAnnotation *ba = MVM_bytecode_get_annotation(tc, static_frame_body, i);
+                static_frame_body->hit_count_ptrs[ba->bytecode_offset] = &static_frame_body->hit_counts[i];
+                free(ba);
+            }
+        }
+#endif
     }
 
     /* Fixup outers. */
@@ -773,5 +788,14 @@ MVMBytecodeAnnotation * MVM_bytecode_resolve_annotation(MVMThreadContext *tc, MV
         }
     }
 
+    return ba;
+}
+
+MVMBytecodeAnnotation * MVM_bytecode_get_annotation(MVMThreadContext *tc, MVMStaticFrameBody *sfb, MVMuint32 index) {
+    MVMint8 *cur_anno = sfb->annotations_data + ANNOTATION_SIZE * index;
+    MVMBytecodeAnnotation *ba = malloc(sizeof(MVMBytecodeAnnotation));
+    ba->bytecode_offset = read_int32(cur_anno, 0);
+    ba->filename_string_heap_index = read_int16(cur_anno, 4);
+    ba->line_number = read_int32(cur_anno, 6);
     return ba;
 }

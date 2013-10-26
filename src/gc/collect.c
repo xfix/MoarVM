@@ -166,7 +166,7 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
         if (item == NULL)
             continue;
 
-        /* If it's in the second generation and we're only doing a nursery,
+        /* If it's in the second generation and we're only doing a nursery
          * collection, we have nothing to do. */
         item_gen2 = item->flags & MVM_CF_SECOND_GEN;
         if (item_gen2 && gen == MVMGCGenerations_Nursery)
@@ -188,15 +188,6 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
             continue;
         }
 
-        /* If the pointer is already into tospace (the bit we've already copied
-         * into), we already updated it, so we're done. If it's in to-space but
-         * *ahead* of our copy offset then it's an out-of-date pointer and we
-         * have some kind of corruption. */
-        if (item >= (MVMCollectable *)tc->nursery_tospace && item < (MVMCollectable *)tc->nursery_alloc)
-            continue;
-        if (item >= (MVMCollectable *)tc->nursery_alloc && item < (MVMCollectable *)tc->nursery_alloc_limit)
-            MVM_panic(1, "Heap corruption detected: pointer %p to past fromspace", item);
-
         /* If it's owned by a different thread, we need to pass it over to
          * the owning thread. */
         if (item->owner != tc->thread_id) {
@@ -204,6 +195,15 @@ static void process_worklist(MVMThreadContext *tc, MVMGCWorklist *worklist, Work
             pass_work_item(tc, wtp, item_ptr);
             continue;
         }
+
+		/* If the pointer is already into tospace (the bit we've already copied
+		* into), we already updated it, so we're done. If it's in to-space but
+		* *ahead* of our copy offset then it's an out-of-date pointer and we
+		* have some kind of corruption. */
+		if (item >= (MVMCollectable *)tc->nursery_tospace && item < (MVMCollectable *)tc->nursery_alloc)
+			continue;
+		if (item >= (MVMCollectable *)tc->nursery_alloc && item < (MVMCollectable *)tc->nursery_alloc_limit)
+			MVM_panic(1, "Heap corruption detected: pointer %p to past fromspace", item);
 
         /* At this point, we didn't already see the object, which means we
          * need to take some action. Go on the generation... */

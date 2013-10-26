@@ -42,7 +42,7 @@ typedef enum {
  * limit sets how many frames of a given static frame type we will
  * keep around. */
 #define MVMInitialFramePoolTableSize    64
-#define MVMFramePoolLengthLimit         64
+#define MVMFramePoolLengthLimit         1024
 
 /* Information associated with an executing thread. */
 struct MVMThreadContext {

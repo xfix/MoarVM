@@ -121,11 +121,15 @@ MVM_PUBLIC void MVM_vm_destroy_instance(MVMInstance *instance);
 /* Full memory barrier. */
 #define MVM_barrier() AO_nop_full()
 
+#define MVM_unchecked_free_null(addr) do { \
+    free((void *)(addr)); \
+    (addr) = NULL; \
+} while (0)
+
 /* Convenience shortcut for use in gc_free routines. */
 #define MVM_checked_free_null(addr) do { \
     if ((addr)) { \
-        free((void *)(addr)); \
-        (addr) = NULL; \
+        MVM_unchecked_free_null(addr); \
     } \
 } while (0)
 

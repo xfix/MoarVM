@@ -29,13 +29,25 @@ struct MVMGCWorklist {
 };
 
 /* Some macros for doing stuff fast with worklists, defined to look like
- * functions since perhaps they become them in the future if needed. */
+ * functions since perhaps they become them in the future if needed.
+ * */
 #define MVM_gc_worklist_add(tc, worklist, item) \
     do { \
-        if (worklist->items == worklist->alloc) \
-            MVM_gc_worklist_add_slow(tc, worklist, (MVMCollectable **)(item)); \
-        else \
-            worklist->list[worklist->items++] = (MVMCollectable **)(item); \
+        if (*(MVMCollectable **)(item)) { \
+            if ((*(MVMCollectable **)(item))->forwarder \
+                    && !((*(MVMCollectable **)(item))->flags & MVM_CF_SECOND_GEN)) { \
+                *(MVMCollectable **)(item) = \
+                    (*(MVMCollectable **)(item))->forwarder; \
+            } \
+            else { \
+                if (worklist->items == worklist->alloc) \
+                    MVM_gc_worklist_add_slow(tc, worklist, \
+                        (MVMCollectable **)(item)); \
+                else \
+                    worklist->list[worklist->items++] \
+                        = (MVMCollectable **)(item); \
+            } \
+        } \
     } while (0)
 
 #define MVM_gc_worklist_add_frame(tc, worklist, frame) \

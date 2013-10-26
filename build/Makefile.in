@@ -16,6 +16,7 @@ ADDCONFIG =
 TRACING = 0
 CGOTO = 0
 NOISY = 0
+HLLLPROF = @hlllprof@
 
 MSG = @:
 CMD =
@@ -25,7 +26,7 @@ NOERR =
 @mknoisy@
 
 PREFIX    = @prefix@
-CFLAGS    = @cflags@ @ccdef@MVM_TRACING=$(TRACING) @ccdef@MVM_CGOTO=$(CGOTO)
+CFLAGS    = @cflags@ @ccdef@MVM_TRACING=$(TRACING) @ccdef@MVM_CGOTO=$(CGOTO) @ccdef@MVM_HLLLPROF=$(HLLLPROF)
 CINCLUDES = @ccinc@3rdparty/libuv/include \
             @ccinc@3rdparty/libuv/src \
             @ccinc@3rdparty/libatomic_ops/src \
