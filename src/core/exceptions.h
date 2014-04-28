@@ -15,6 +15,7 @@
 #define MVM_EX_CAT_WARN          256
 #define MVM_EX_CAT_SUCCEED       512
 #define MVM_EX_CAT_PROCEED       1024
+#define MVM_EX_CAT_LABELED       4096
 
 /* Ways to throw an exception. */
 #define MVM_EX_THROW_DYN         0
@@ -40,6 +41,9 @@ struct MVMFrameHandler {
 
     /* Offset into the frame's bytecode of the handler, for goto handlers. */
     MVMuint32 goto_offset;
+
+    /* A label's address, so we can check for its identity when handling e.g. `next LABEL`. */
+    MVMuint64 block_label;
 };
 
 /* An active (currently executing) exception handler. */
