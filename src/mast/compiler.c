@@ -829,7 +829,8 @@ void compile_instruction(VM, WriterState *ws, MASTNode *node) {
         ws->cur_frame->handlers[i].end_offset = end;
         ws->cur_frame->handlers[i].category_mask = (unsigned int)hs->category_mask;
         ws->cur_frame->handlers[i].action = (unsigned short)hs->action;
-        ws->cur_frame->handlers[i].block_label = hs->block_label;
+        if (ws->cur_frame->handlers[i].category_mask & MVM_EX_CAT_LABELED)
+            ws->cur_frame->handlers[i].block_label = hs->block_label;
 
         /* Ensure we have a label. */
         if (ISTYPE(vm, hs->goto_label, ws->types->Label)) {
