@@ -587,6 +587,7 @@ module HandlerCategory {
     our $succeed := 512;
     our $proceed := 1024;
     our $labeled := 4096;
+    our $handler := 8192; # We need to run the handler, in order to know if it is responsible or not.
 }
 
 # A region with a handler.
