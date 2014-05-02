@@ -185,15 +185,21 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 cur_op += 4;
                 goto NEXT;
             OP(getlex): {
-                MVMFrame *f = tc->cur_frame;
-                MVMuint16 outers = GET_UI16(cur_op, 4);
+                MVMFrame    *f = tc->cur_frame;
+                MVMuint16    outers = GET_UI16(cur_op, 4);
+                MVMRegister  found;
                 while (outers) {
                     if (!f)
                         MVM_exception_throw_adhoc(tc, "getlex: outer index out of range");
                     f = f->outer;
                     outers--;
                 }
-                GET_REG(cur_op, 0) = GET_LEX(cur_op, 2, f);
+                GET_REG(cur_op, 0) = found = GET_LEX(cur_op, 2, f);
+                if (found.o == NULL) {
+                    MVMuint16 idx = GET_UI16(cur_op, 2);
+                    if (f->static_info->body.lexical_types[idx] == MVM_reg_obj)
+                        GET_REG(cur_op, 0).o = MVM_frame_vivify_lexical(tc, f, idx);
+                }
                 cur_op += 6;
                 goto NEXT;
             }
@@ -863,10 +869,10 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 cur_op += 2;
                 goto NEXT;
             OP(ifnonnull):
-                if (GET_REG(cur_op, 0).o != NULL)
-                    cur_op = bytecode_start + GET_UI32(cur_op, 2);
-                else
+                if (MVM_is_null(tc, GET_REG(cur_op, 0).o))
                     cur_op += 6;
+                else
+                    cur_op = bytecode_start + GET_UI32(cur_op, 2);
                 GC_SYNC_POINT(tc);
                 goto NEXT;
             OP(cmp_i): {
@@ -2595,10 +2601,12 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 cur_op += 6;
                 goto NEXT;
             }
-            OP(isnull):
-                GET_REG(cur_op, 0).i64 = GET_REG(cur_op, 2).o ? 0 : 1;
+            OP(isnull): {
+                MVMObject *obj = GET_REG(cur_op, 2).o;
+                GET_REG(cur_op, 0).i64 = MVM_is_null(tc, obj);
                 cur_op += 4;
                 goto NEXT;
+            }
             OP(knowhowattr):
                 GET_REG(cur_op, 0).o = tc->instance->KnowHOWAttribute;
                 cur_op += 2;
@@ -2609,7 +2617,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 cur_op += 4;
                 goto NEXT;
             OP(null):
-                GET_REG(cur_op, 0).o = NULL;
+                GET_REG(cur_op, 0).o = tc->instance->VMNull;
                 cur_op += 2;
                 goto NEXT;
             OP(clone): {
@@ -2955,7 +2963,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 MVMString *hll_name = tc->cur_frame->static_info->body.cu->body.hll_name;
                 uv_mutex_lock(&tc->instance->mutex_hll_syms);
                 hash = MVM_repr_at_key_o(tc, syms, hll_name);
-                if (!hash) {
+                if (MVM_is_null(tc, hash)) {
                     hash = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTHash);
                     /* must re-get syms in case it moved */
                     syms = tc->instance->hll_syms;
@@ -3257,19 +3265,19 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 cur_op += 4;
                 goto NEXT;
             OP(getstdin):
-                if (!tc->instance->stdin_handle)
+                if (MVM_is_null(tc, tc->instance->stdin_handle))
                     MVM_exception_throw_adhoc(tc, "STDIN filehandle was never initialized");
                 GET_REG(cur_op, 0).o = tc->instance->stdin_handle;
                 cur_op += 2;
                 goto NEXT;
             OP(getstdout):
-                if (!tc->instance->stdout_handle)
+                if (MVM_is_null(tc, tc->instance->stdout_handle))
                     MVM_exception_throw_adhoc(tc, "STDOUT filehandle was never initialized");
                 GET_REG(cur_op, 0).o = tc->instance->stdout_handle;
                 cur_op += 2;
                 goto NEXT;
             OP(getstderr):
-                if (!tc->instance->stderr_handle)
+                if (MVM_is_null(tc, tc->instance->stderr_handle))
                     MVM_exception_throw_adhoc(tc, "STDERR filehandle was never initialized");
                 GET_REG(cur_op, 0).o = tc->instance->stderr_handle;
                 cur_op += 2;
@@ -3576,7 +3584,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 MVMObject * const sc  = GET_REG(cur_op, 0).o;
                 if (REPR(sc)->ID != MVM_REPR_ID_SCRef)
                     MVM_exception_throw_adhoc(tc, "Can only push an SCRef with pushcompsc");
-                if (!tc->compiling_scs) {
+                if (MVM_is_null(tc, tc->compiling_scs)) {
                     MVMROOT(tc, sc, {
                         tc->compiling_scs = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTArray);
                     });
@@ -3587,7 +3595,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
             }
             OP(popcompsc): {
                 MVMObject * const scs = tc->compiling_scs;
-                if (!scs || MVM_repr_elems(tc, scs) == 0)
+                if (MVM_is_null(tc, scs) || MVM_repr_elems(tc, scs) == 0)
                     MVM_exception_throw_adhoc(tc, "No current compiling SC");
                 MVM_repr_shift_o(tc, tc->compiling_scs);
                 cur_op += 2;
@@ -3644,7 +3652,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 MVMObject *hash;
                 uv_mutex_lock(&tc->instance->mutex_hll_syms);
                 hash = MVM_repr_at_key_o(tc, syms, hll_name);
-                if (!hash) {
+                if (MVM_is_null(tc, hash)) {
                     hash = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTHash);
                     /* must re-get syms and HLL name in case it moved */
                     syms = tc->instance->hll_syms;
@@ -3690,7 +3698,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 MVMString *lib = GET_REG(cur_op, 2).s;
                 MVMString *sym = GET_REG(cur_op, 4).s;
                 MVMObject *obj = MVM_dll_find_symbol(tc, lib, sym);
-                if (!obj)
+                if (MVM_is_null(tc, obj))
                     MVM_exception_throw_adhoc(tc, "symbol not found in DLL");
 
                 GET_REG(cur_op, 0).o = obj;
@@ -4256,7 +4264,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                     /* Missed mono-morph; try cache-only lookup. */
                     MVMString *name = cu->body.strings[GET_UI32(cur_op, 4)];
                     MVMObject *meth = MVM_6model_find_method_cache_only(tc, obj, name);
-                    if (meth) {
+                    if (!MVM_is_null(tc, meth)) {
                         /* Got it; cache. Must be careful due to threads
                          * reading, races, etc. */
                         MVMStaticFrame *sf = tc->cur_frame->static_info;
@@ -4315,8 +4323,7 @@ void MVM_interp_run(MVMThreadContext *tc, void (*initial_invoke)(MVMThreadContex
                 MVMObject *o     = GET_REG(cur_op, 0).o;
                 MVMObject *value = GET_REG(cur_op, 4).o;
                 char      *data  = MVM_p6opaque_real_data(tc, OBJECT_BODY(o));
-                MVM_ASSIGN_REF(tc, &(o->header), *((MVMObject **)(data + GET_UI16(cur_op, 2))),
-                    value ? value : MVM_p6opague_ass_null(tc));
+                MVM_ASSIGN_REF(tc, &(o->header), *((MVMObject **)(data + GET_UI16(cur_op, 2))), value);
                 cur_op += 6;
                 goto NEXT;
             }

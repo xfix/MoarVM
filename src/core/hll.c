@@ -66,7 +66,7 @@ MVMHLLConfig *MVM_hll_get_config_for(MVMThreadContext *tc, MVMString *name) {
 #define check_config_key(tc, hash, name, member, config) do { \
     MVMString *key = MVM_string_utf8_decode((tc), (tc)->instance->VMString, (name), strlen((name))); \
     MVMObject *val = MVM_repr_at_key_o((tc), (hash), key); \
-    if (val) (config)->member = val; \
+    if (!MVM_is_null(tc, val)) (config)->member = val; \
 } while (0)
 
 MVMObject * MVM_hll_set_config(MVMThreadContext *tc, MVMString *name, MVMObject *config_hash) {
@@ -132,7 +132,7 @@ static MVMCallsite     obj_arg_callsite = { obj_arg_flags, 1, 1, 0 };
  * of it if not. */
 void MVM_hll_map(MVMThreadContext *tc, MVMObject *obj, MVMHLLConfig *hll, MVMRegister *res_reg) {
     /* Null objects get mapped to null_value. */
-    if (!obj) {
+    if (MVM_is_null(tc, obj)) {
         res_reg->o = hll->null_value;
     }
 
@@ -215,14 +215,14 @@ MVMObject * MVM_hll_sym_get(MVMThreadContext *tc, MVMString *hll, MVMString *sym
     MVMObject *syms = tc->instance->hll_syms, *hash, *result;
     uv_mutex_lock(&tc->instance->mutex_hll_syms);
     hash = MVM_repr_at_key_o(tc, syms, hll);
-    if (!hash) {
+    if (MVM_is_null(tc, hash)) {
         MVMROOT(tc, hll, {
         MVMROOT(tc, syms, {
             hash = MVM_repr_alloc_init(tc, tc->instance->boot_types.BOOTHash);
         });
         });
         MVM_repr_bind_key_o(tc, syms, hll, hash);
-        result = NULL;
+        result = tc->instance->VMNull;
     }
     else {
         result = MVM_repr_at_key_o(tc, hash, sym);
