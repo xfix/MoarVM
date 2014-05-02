@@ -82,7 +82,7 @@ static MVMFrameHandler * search_frame_handlers(MVMThreadContext *tc, MVMFrame *f
         MVMuint64 some_wanted_bits_are_set = cat & category_mask;
         MVMuint64  all_wanted_bits_are_set = some_wanted_bits_are_set == cat;
         MVMuint64  want_handler_with_label = cat & MVM_EX_CAT_LABELED;
-        MVMuint64 handler_checks_for_label = category_mask & (2*MVM_EX_CAT_LABELED);
+        MVMuint64 handler_checks_for_label = category_mask & MVM_EX_CAT_HANDLER;
         MVMuint64    identical_label_found = thrown_label == block_label;
         
         if ( handler_checks_for_label
