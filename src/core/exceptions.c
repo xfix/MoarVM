@@ -43,12 +43,14 @@ static const char * cat_name(MVMThreadContext *tc, MVMint32 cat) {
 }
 
 /* Checks if an exception handler is already on the active handler stack,
- * so we don't re-trigger the same exception handler. */
-static MVMuint8 in_handler_stack(MVMThreadContext *tc, MVMFrameHandler *fh) {
+ * so we don't re-trigger the same exception handler. Note: We have static
+ * handlers that get reused, so also check for the same handler being in
+ * the same frame, otherwise we consider the handler as being another one. */
+static MVMuint8 in_handler_stack(MVMThreadContext *tc, MVMFrameHandler *fh, MVMFrame *f) {
     if (tc->active_handlers) {
         MVMActiveHandler *ah = tc->active_handlers;
         while (ah) {
-            if (ah->handler == fh)
+            if (ah->handler == fh && ah->frame == f)
                 return 1;
             ah = ah->next_handler;
         }
@@ -75,10 +77,19 @@ static MVMFrameHandler * search_frame_handlers(MVMThreadContext *tc, MVMFrame *f
     for (i = 0; i < f->static_info->body.num_handlers; i++) {
         MVMuint32 category_mask = f->effective_handlers[i].category_mask;
         MVMuint64   block_label = f->effective_handlers[i].block_label;
-        if ((((category_mask & cat) == cat) && (!(cat & MVM_EX_CAT_LABELED) || ((MVMint64)payload == block_label)))
-         || ((category_mask & MVM_EX_CAT_CONTROL) && cat != MVM_EX_CAT_CATCH)) {
+        MVMuint64  thrown_label = payload ? (MVMuint64)payload : 0;
+
+        MVMuint64 some_wanted_bits_are_set = cat & category_mask;
+        MVMuint64  all_wanted_bits_are_set = some_wanted_bits_are_set == cat;
+        MVMuint64  want_handler_with_label = cat & MVM_EX_CAT_LABELED;
+        MVMuint64 handler_checks_for_label = category_mask & (2*MVM_EX_CAT_LABELED);
+        MVMuint64    identical_label_found = thrown_label == block_label;
+        
+        if ( handler_checks_for_label
+          || (all_wanted_bits_are_set && (!want_handler_with_label || identical_label_found))
+          || ((category_mask & MVM_EX_CAT_CONTROL) && cat != MVM_EX_CAT_CATCH) ) {
             if (pc >= f->effective_handlers[i].start_offset && pc <= f->effective_handlers[i].end_offset)
-                if (!in_handler_stack(tc, &f->effective_handlers[i]))
+                if (!in_handler_stack(tc, &f->effective_handlers[i], f))
                     return &f->effective_handlers[i];
         }
     }
