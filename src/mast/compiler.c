@@ -831,6 +831,8 @@ void compile_instruction(VM, WriterState *ws, MASTNode *node) {
         ws->cur_frame->handlers[i].action = (unsigned short)hs->action;
         if (ws->cur_frame->handlers[i].category_mask & MVM_EX_CAT_LABELED)
             ws->cur_frame->handlers[i].block_label = hs->block_label;
+        else
+            ws->cur_frame->handlers[i].block_label = 0;
 
         /* Ensure we have a label. */
         if (ISTYPE(vm, hs->goto_label, ws->types->Label)) {
