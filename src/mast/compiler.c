@@ -53,7 +53,7 @@ typedef struct {
     MASTNode *label;
 
     /* The label of the block the handler is attached to. */
-    MVMint64 block_label;
+    unsigned short block_label;
 } FrameHandler;
 
 /* Handler actions. */
@@ -829,10 +829,28 @@ void compile_instruction(VM, WriterState *ws, MASTNode *node) {
         ws->cur_frame->handlers[i].end_offset = end;
         ws->cur_frame->handlers[i].category_mask = (unsigned int)hs->category_mask;
         ws->cur_frame->handlers[i].action = (unsigned short)hs->action;
-        if (ws->cur_frame->handlers[i].category_mask & MVM_EX_CAT_LABELED)
-            ws->cur_frame->handlers[i].block_label = hs->block_label;
-        else
-            ws->cur_frame->handlers[i].block_label = 0;
+        if (ws->cur_frame->handlers[i].category_mask & MVM_EX_CAT_LABELED) {
+            if (ISTYPE(vm, hs->block_label, ws->types->Local)) {
+                MAST_Local *l = GET_Local(hs->block_label);
+
+                /* Ensure it's within the set of known locals and an object. */
+                if (l->index >= ws->cur_frame->num_locals) {
+                    cleanup_all(vm, ws);
+                    DIE(vm, "MAST::Local index out of range in HandlerScope");
+                }
+                if (ws->cur_frame->local_types[l->index] != MVM_reg_obj) {
+                    cleanup_all(vm, ws);
+                    DIE(vm, "MAST::Local for HandlerScope must be an object");
+                }
+
+                /* Stash local index. */
+                ws->cur_frame->handlers[i].block_label = (unsigned short)l->index;
+            }
+            else {
+                cleanup_all(vm, ws);
+                DIE(vm, "MAST::Local required for HandlerScope with loop label");
+            }
+        }
 
         /* Ensure we have a label. */
         if (ISTYPE(vm, hs->goto_label, ws->types->Label)) {
@@ -1049,8 +1067,8 @@ void compile_frame(VM, WriterState *ws, MASTNode *node, unsigned short idx) {
         }
         ws->frame_pos += 4;
         if (fs->handlers[i].category_mask & MVM_EX_CAT_LABELED) {
-            write_int64(ws->frame_seg, ws->frame_pos, (MVMint64)fs->handlers[i].block_label);
-            ws->frame_pos += 8;
+            write_int16(ws->frame_seg, ws->frame_pos, fs->handlers[i].block_label);
+            ws->frame_pos += 2;
         }
     }
 

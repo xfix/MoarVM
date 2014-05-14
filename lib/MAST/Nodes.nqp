@@ -587,7 +587,6 @@ module HandlerCategory {
     our $succeed := 512;
     our $proceed := 1024;
     our $labeled := 4096;
-    our $handler := 8192; # We need to run the handler, in order to know if it is responsible or not.
 }
 
 # A region with a handler.
@@ -597,14 +596,13 @@ class MAST::HandlerScope is MAST::Node {
     has int $!action;
     has $!goto_label;
     has $!block_local;
-    has int $!label;
+    has $!block_label;
 
-    method new(:@instructions!, :$category_mask!, :$action!, :$goto!, :$block, :$label = 0) {
+    method new(:@instructions!, :$category_mask!, :$action!, :$goto!, :$block, :$label) {
         my $obj := nqp::create(self);
         nqp::bindattr($obj, MAST::HandlerScope, '@!instructions', @instructions);
         nqp::bindattr_i($obj, MAST::HandlerScope, '$!category_mask', $category_mask);
         nqp::bindattr_i($obj, MAST::HandlerScope, '$!action', $action);
-        nqp::bindattr_i($obj, MAST::HandlerScope, '$!label', $label);
         if nqp::istype($goto, MAST::Label) {
             nqp::bindattr($obj, MAST::HandlerScope, '$!goto_label', $goto);
         }
@@ -622,6 +620,14 @@ class MAST::HandlerScope is MAST::Node {
         elsif $action != $HandlerAction::unwind_and_goto &&
               $action != $HandlerAction::unwind_and_goto_obj {
             nqp::die("Unknown handler action");
+        }
+        if $category_mask +& $HandlerCategory::labeled {
+            if nqp::istype($label, MAST::Local) {
+                nqp::bindattr($obj, MAST::HandlerScope, '$!block_label', $label);
+            }
+            else {
+                nqp::die("Handler category 'labeled' needs a MAST::Local");
+            }
         }
         $obj
     }
