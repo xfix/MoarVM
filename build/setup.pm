@@ -114,6 +114,12 @@ our %TC_POSIX = (
     ccinc    => '-I',
     ccdef    => '-D',
 
+    cppswitch => '-E',
+    cppout    => '> ',
+
+    asmswitch => '-S',
+    asmout    => '-o ',
+
     ldout => undef,
     lddir => '-L',
     ldusr => '-l%s',
@@ -134,6 +140,7 @@ our %TC_POSIX = (
     obj => '.o',
     lib => 'lib%s.a',
     dll => 'lib%s.so',
+    asm => '.s',
 
     shareddir => 'lib',
     sharedlib => '',
@@ -187,6 +194,12 @@ our %TC_MSVC = (
     ccinc    => '/I',
     ccdef    => '/D',
 
+    cppswitch => '/P',
+    cppout    => '/Fi',
+
+    asmswitch => '/c /FAs',
+    asmout    => '/Fa',
+
     ldout => '/out:',
     lddir => '/libpath:',
     ldusr => '%s.lib',
@@ -214,6 +227,7 @@ TERM
     obj => '.obj',
     lib => '%s.lib',
     dll => '%s.dll',
+    asm => '.asm',
 
     shareddir => 'bin',
     sharedlib => '@moardll@.lib',

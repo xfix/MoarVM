@@ -134,8 +134,12 @@ struct MVMCollectable {
     union {
         /* Forwarding pointer, for copying/compacting GC purposes. */
         MVMCollectable *forwarder;
-        /* Pointer to the serialization context this collectable lives in, if any. */
-        MVMSerializationContext *sc;
+        /* Index of the serialization context this collectable lives in, if
+         * any, and then location within that. */
+        struct {
+            MVMint32 sc_idx;
+            MVMint32 idx;
+        } sc;
         /* Used to chain STables queued to be freed. */
         MVMSTable *st;
     } sc_forward_u;
@@ -259,7 +263,7 @@ struct MVMSTable {
 };
 
 /* The representation operations table. Note that representations are not
- * classes - there's no inheritance, so there's no polymprhism. If you know
+ * classes - there's no inheritance, so there's no polymorphism. If you know
  * a representation statically, you can statically dereference the call to
  * the representation op in question. In the dynamic case, you have to go
  * following the pointer, however. */
@@ -515,6 +519,7 @@ struct MVMREPROps {
 /* Some functions related to 6model core functionality. */
 void MVM_6model_find_method(MVMThreadContext *tc, MVMObject *obj, MVMString *name, MVMRegister *res);
 MVM_PUBLIC MVMObject * MVM_6model_find_method_cache_only(MVMThreadContext *tc, MVMObject *obj, MVMString *name);
+MVMint64 MVM_6model_can_method_cache_only(MVMThreadContext *tc, MVMObject *obj, MVMString *name);
 void MVM_6model_can_method(MVMThreadContext *tc, MVMObject *obj, MVMString *name, MVMRegister *res);
 void MVM_6model_istype(MVMThreadContext *tc, MVMObject *obj, MVMObject *type, MVMRegister *res);
 MVM_PUBLIC MVMint64 MVM_6model_istype_cache_only(MVMThreadContext *tc, MVMObject *obj, MVMObject *type);

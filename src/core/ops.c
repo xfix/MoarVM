@@ -330,7 +330,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "  ",
         2,
         1,
-        0,
+        1,
         { MVM_operand_write_reg | MVM_operand_type_var, MVM_operand_read_lex | MVM_operand_type_var }
     },
     {
@@ -375,7 +375,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "  ",
         2,
         1,
-        0,
+        1,
         { MVM_operand_write_reg | MVM_operand_obj, MVM_operand_str }
     },
     {
@@ -1229,7 +1229,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "-a",
         1,
         0,
-        1,
+        2,
         { MVM_operand_read_reg | MVM_operand_obj }
     },
     {
@@ -1238,7 +1238,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "-a",
         2,
         0,
-        1,
+        2,
         { MVM_operand_write_reg | MVM_operand_int64, MVM_operand_read_reg | MVM_operand_obj }
     },
     {
@@ -1247,7 +1247,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "-a",
         2,
         0,
-        1,
+        2,
         { MVM_operand_write_reg | MVM_operand_num64, MVM_operand_read_reg | MVM_operand_obj }
     },
     {
@@ -1256,7 +1256,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "-a",
         2,
         0,
-        1,
+        2,
         { MVM_operand_write_reg | MVM_operand_str, MVM_operand_read_reg | MVM_operand_obj }
     },
     {
@@ -1265,7 +1265,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "-a",
         2,
         0,
-        1,
+        3,
         { MVM_operand_write_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_obj }
     },
     {
@@ -2516,7 +2516,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "  ",
         5,
         0,
-        0,
+        1,
         { MVM_operand_write_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_str, MVM_operand_int16 }
     },
     {
@@ -2552,7 +2552,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "  ",
         4,
         0,
-        0,
+        1,
         { MVM_operand_write_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_str }
     },
     {
@@ -5349,6 +5349,24 @@ static MVMOpInfo MVM_op_infos[] = {
         { MVM_operand_write_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_obj }
     },
     {
+        MVM_OP_getlexstatic_o,
+        "getlexstatic_o",
+        "  ",
+        2,
+        1,
+        0,
+        { MVM_operand_write_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_str }
+    },
+    {
+        MVM_OP_getlexperinvtype_o,
+        "getlexperinvtype_o",
+        "  ",
+        2,
+        1,
+        0,
+        { MVM_operand_write_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_str }
+    },
+    {
         MVM_OP_execname,
         "execname",
         "  ",
@@ -5356,6 +5374,78 @@ static MVMOpInfo MVM_op_infos[] = {
         0,
         0,
         { MVM_operand_write_reg | MVM_operand_str }
+    },
+    {
+        MVM_OP_const_i64_16,
+        "const_i64_16",
+        "  ",
+        2,
+        1,
+        0,
+        { MVM_operand_write_reg | MVM_operand_int64, MVM_operand_int16 }
+    },
+    {
+        MVM_OP_const_i64_32,
+        "const_i64_32",
+        "  ",
+        2,
+        1,
+        0,
+        { MVM_operand_write_reg | MVM_operand_int64, MVM_operand_int32 }
+    },
+    {
+        MVM_OP_isnonnull,
+        "isnonnull",
+        "  ",
+        2,
+        1,
+        0,
+        { MVM_operand_write_reg | MVM_operand_int64, MVM_operand_read_reg | MVM_operand_obj }
+    },
+    {
+        MVM_OP_sp_log,
+        "sp_log",
+        ".s",
+        2,
+        0,
+        0,
+        { MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16 }
+    },
+    {
+        MVM_OP_sp_guardconc,
+        "sp_guardconc",
+        ".s",
+        2,
+        0,
+        0,
+        { MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16 }
+    },
+    {
+        MVM_OP_sp_guardtype,
+        "sp_guardtype",
+        ".s",
+        2,
+        0,
+        0,
+        { MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16 }
+    },
+    {
+        MVM_OP_sp_guardcontconc,
+        "sp_guardcontconc",
+        ".s",
+        3,
+        0,
+        0,
+        { MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16, MVM_operand_int16 }
+    },
+    {
+        MVM_OP_sp_guardconttype,
+        "sp_guardconttype",
+        ".s",
+        3,
+        0,
+        0,
+        { MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16, MVM_operand_int16 }
     },
     {
         MVM_OP_sp_getarg_o,
@@ -5416,7 +5506,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "sp_fastcreate",
         ".s",
         3,
-        0,
+        1,
         0,
         { MVM_operand_write_reg | MVM_operand_obj, MVM_operand_int16, MVM_operand_int16 }
     },
@@ -5425,7 +5515,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "sp_get_o",
         ".s",
         3,
-        0,
+        1,
         0,
         { MVM_operand_write_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16 }
     },
@@ -5434,7 +5524,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "sp_get_i",
         ".s",
         3,
-        0,
+        1,
         0,
         { MVM_operand_write_reg | MVM_operand_int64, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16 }
     },
@@ -5443,7 +5533,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "sp_get_n",
         ".s",
         3,
-        0,
+        1,
         0,
         { MVM_operand_write_reg | MVM_operand_num64, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16 }
     },
@@ -5452,7 +5542,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "sp_get_s",
         ".s",
         3,
-        0,
+        1,
         0,
         { MVM_operand_write_reg | MVM_operand_str, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16 }
     },
@@ -5497,7 +5587,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "sp_p6oget_o",
         ".s",
         3,
-        0,
+        1,
         0,
         { MVM_operand_write_reg | MVM_operand_obj, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16 }
     },
@@ -5524,7 +5614,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "sp_p6oget_i",
         ".s",
         3,
-        0,
+        1,
         0,
         { MVM_operand_write_reg | MVM_operand_int64, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16 }
     },
@@ -5533,7 +5623,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "sp_p6oget_n",
         ".s",
         3,
-        0,
+        1,
         0,
         { MVM_operand_write_reg | MVM_operand_num64, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16 }
     },
@@ -5542,7 +5632,7 @@ static MVMOpInfo MVM_op_infos[] = {
         "sp_p6oget_s",
         ".s",
         3,
-        0,
+        1,
         0,
         { MVM_operand_write_reg | MVM_operand_str, MVM_operand_read_reg | MVM_operand_obj, MVM_operand_int16 }
     },
@@ -5584,7 +5674,7 @@ static MVMOpInfo MVM_op_infos[] = {
     },
 };
 
-static unsigned short MVM_op_counts = 620;
+static unsigned short MVM_op_counts = 630;
 
 MVMOpInfo * MVM_op_get_op(unsigned short op) {
     if (op >= MVM_op_counts)

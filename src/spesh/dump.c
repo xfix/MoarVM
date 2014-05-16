@@ -69,9 +69,13 @@ static void dump_bb(MVMThreadContext *tc, DumpStr *ds, MVMSpeshGraph *g, MVMSpes
                     appendf(ds, "      [Annotation: FH Goto (%d)]\n",
                         ann->data.frame_handler_index);
                     break;
-                case MVM_SPESH_ANN_DEOPT_INS:
-                    appendf(ds, "      [Annotation: INS Deopt (idx %d -> pc %d)]\n",
-                        ann->data.deopt_idx, g->deopt_addrs[ann->data.deopt_idx]);
+                case MVM_SPESH_ANN_DEOPT_ONE_INS:
+                    appendf(ds, "      [Annotation: INS Deopt One (idx %d -> pc %d)]\n",
+                        ann->data.deopt_idx, g->deopt_addrs[2 * ann->data.deopt_idx]);
+                    break;
+                case MVM_SPESH_ANN_DEOPT_ALL_INS:
+                    appendf(ds, "      [Annotation: INS Deopt All (idx %d -> pc %d)]\n",
+                        ann->data.deopt_idx, g->deopt_addrs[2 * ann->data.deopt_idx]);
                     break;
                 default:
                     appendf(ds, "      [Annotation: %d (unknown)]\n", ann->type);
@@ -122,6 +126,13 @@ static void dump_bb(MVMThreadContext *tc, DumpStr *ds, MVMSpeshGraph *g, MVMSpes
                         case MVM_operand_num64:
                             appendf(ds, "litn64(%d)", cur_ins->operands[i].lit_n64);
                             break;
+                        case MVM_operand_str:
+                        {
+                            char *cstr = MVM_string_utf8_encode_C_string(tc, g->sf->body.cu->body.strings[cur_ins->operands[i].lit_str_idx]);
+                            appendf(ds, "lits(%s)", cstr);
+                            free(cstr);
+                            break;
+                        }
                         default:
                             append(ds, "<nyi(lit)>");
                         }
@@ -149,6 +160,20 @@ static void dump_bb(MVMThreadContext *tc, DumpStr *ds, MVMSpeshGraph *g, MVMSpes
     append(ds, "\n\n");
 }
 
+/* Dumps the facts table. */
+static void dump_facts(MVMThreadContext *tc, DumpStr *ds, MVMSpeshGraph *g) {
+    MVMuint16 i, j, num_locals, num_facts;
+    num_locals = g->sf->body.num_locals;
+    for (i = 0; i < num_locals; i++) {
+        num_facts = g->fact_counts[i];
+        for (j = 0; j < num_facts; j++) {
+            MVMint32 usages = g->facts[i][j].usages;
+            MVMint32 flags  = g->facts[i][j].flags;
+            appendf(ds, "    r%d(%d): usages=%d, flags=%d\n", i, j, usages, flags);
+        }
+    }
+}
+
 /* Dump a spesh graph into string form, for debugging purposes. */
 char * MVM_spesh_dump(MVMThreadContext *tc, MVMSpeshGraph *g) {
     MVMSpeshBB *cur_bb;
@@ -172,6 +197,10 @@ char * MVM_spesh_dump(MVMThreadContext *tc, MVMSpeshGraph *g) {
         dump_bb(tc, &ds, g, cur_bb);
         cur_bb = cur_bb->linear_next;
     }
+
+    /* Dump facts. */
+    append(&ds, "\nFacts:\n");
+    dump_facts(tc, &ds, g);
 
     append(&ds, "\n");
     append_null(&ds);

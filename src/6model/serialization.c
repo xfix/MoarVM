@@ -339,20 +339,6 @@ static void write_varint_func(MVMThreadContext *tc, MVMSerializationWriter *writ
     *(writer->cur_write_offset) += storage_needed;
 }
 
-/* Writing function for native 32-bit integers. */
-static void write_int32_func(MVMThreadContext *tc, MVMSerializationWriter *writer, MVMint32 value) {
-    expand_storage_if_needed(tc, writer, 4);
-    write_int32(*(writer->cur_write_buffer), *(writer->cur_write_offset), value);
-    *(writer->cur_write_offset) += 4;
-}
-
-/* Writing function for native 16-bit integers. */
-static void write_int16_func(MVMThreadContext *tc, MVMSerializationWriter *writer, MVMint16 value) {
-    expand_storage_if_needed(tc, writer, 2);
-    write_int16(*(writer->cur_write_buffer), *(writer->cur_write_offset), value);
-    *(writer->cur_write_offset) += 2;
-}
-
 /* Writing function for native numbers. */
 static void write_num_func(MVMThreadContext *tc, MVMSerializationWriter *writer, MVMnum64 value) {
     expand_storage_if_needed(tc, writer, 8);
@@ -1130,8 +1116,6 @@ MVMString * MVM_serialization_serialize(MVMThreadContext *tc, MVMSerializationCo
     /* Populate write functions table. */
     writer->write_int        = write_int_func;
     writer->write_varint     = write_varint_func;
-    writer->write_int16      = write_int16_func;
-    writer->write_int32      = write_int32_func;
     writer->write_num        = write_num_func;
     writer->write_str        = write_str_func;
     writer->write_ref        = write_ref_func;
@@ -1168,48 +1152,48 @@ MVMString * MVM_serialization_serialize(MVMThreadContext *tc, MVMSerializationCo
  * ***************************************************************************/
 
 /* Reads an int64 from a buffer. */
-static MVMint64 read_int64(char *buffer, size_t offset) {
+static MVMint64 read_int64(const char *buffer, size_t offset) {
     MVMint64 value;
-#ifdef MVM_BIGENDIAN
-    switch_endian(buffer + offset, 8);
-#endif
     memcpy(&value, buffer + offset, 8);
+#ifdef MVM_BIGENDIAN
+    switch_endian(&value, 8);
+#endif
     return value;
 }
 
 /* Reads an int32 from a buffer. */
-static MVMint32 read_int32(char *buffer, size_t offset) {
+static MVMint32 read_int32(const char *buffer, size_t offset) {
     MVMint32 value;
-#ifdef MVM_BIGENDIAN
-    switch_endian(buffer + offset, 4);
-#endif
     memcpy(&value, buffer + offset, 4);
+#ifdef MVM_BIGENDIAN
+    switch_endian(&value, 4);
+#endif
     return value;
 }
 
 /* Reads an int16 from a buffer. */
-static MVMint16 read_int16(char *buffer, size_t offset) {
+static MVMint16 read_int16(const char *buffer, size_t offset) {
     MVMint16 value;
-#ifdef MVM_BIGENDIAN
-    switch_endian(buffer + offset, 2);
-#endif
     memcpy(&value, buffer + offset, 2);
+#ifdef MVM_BIGENDIAN
+    switch_endian(&value, 2);
+#endif
     return value;
 }
 
 /* Reads double from a buffer. */
-static MVMnum64 read_double(char *buffer, size_t offset) {
+static MVMnum64 read_double(const char *buffer, size_t offset) {
     MVMnum64 value;
-#ifdef MVM_BIGENDIAN
-    switch_endian(buffer + offset, 8);
-#endif
     memcpy(&value, buffer + offset, 8);
+#ifdef MVM_BIGENDIAN
+    switch_endian(&value, 8);
+#endif
     return value;
 }
 
 /* Reads an int64 from up to 128bits of storage.
  * Returns how far to advance the offset. */
-static size_t read_varint9(MVMuint8 *buffer, size_t offset, int64_t *value) {
+static size_t read_varint9(const MVMuint8 *buffer, size_t offset, int64_t *value) {
     size_t inner_offset = 0;
     size_t shift_amount = 0;
     int64_t negation_mask = 0;
@@ -1322,24 +1306,6 @@ static MVMint64 read_varint_func(MVMThreadContext *tc, MVMSerializationReader *r
     assert_can_read_varint(tc, reader);
     length = read_varint9(*(reader->cur_read_buffer), *(reader->cur_read_offset), &result);
     *(reader->cur_read_offset) += length;
-    return result;
-}
-
-/* Reading function for native 32-bit integers. */
-static MVMint32 read_int32_func(MVMThreadContext *tc, MVMSerializationReader *reader) {
-    MVMint32 result;
-    assert_can_read(tc, reader, 4);
-    result = read_int32(*(reader->cur_read_buffer), *(reader->cur_read_offset));
-    *(reader->cur_read_offset) += 4;
-    return result;
-}
-
-/* Reading function for native 16-bit integers. */
-static MVMint16 read_int16_func(MVMThreadContext *tc, MVMSerializationReader *reader) {
-    MVMint16 result;
-    assert_can_read(tc, reader, 2);
-    result = read_int16(*(reader->cur_read_buffer), *(reader->cur_read_offset));
-    *(reader->cur_read_offset) += 2;
     return result;
 }
 
@@ -1767,6 +1733,7 @@ static void stub_stables(MVMThreadContext *tc, MVMSerializationReader *reader) {
 
         /* Set the STable's SC. */
         MVM_sc_set_stable_sc(tc, st, reader->root.sc);
+        st->header.sc_forward_u.sc.idx = i;
     }
 }
 
@@ -1824,6 +1791,7 @@ static void stub_objects(MVMThreadContext *tc, MVMSerializationReader *reader) {
 
         /* Set the object's SC. */
         MVM_sc_set_obj_sc(tc, obj, reader->root.sc);
+        obj->header.sc_forward_u.sc.idx = i;
     }
 }
 
@@ -2104,8 +2072,6 @@ void MVM_serialization_deserialize(MVMThreadContext *tc, MVMSerializationContext
     /* if we are before VARINT_MIN_VERSION, this will be changed to point
      * to read_int instead */
     reader->read_varint     = read_varint_func;
-    reader->read_int32      = read_int32_func;
-    reader->read_int16      = read_int16_func;
     reader->read_num        = read_num_func;
     reader->read_str        = read_str_func;
     reader->read_ref        = read_ref_func;

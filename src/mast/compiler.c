@@ -1,6 +1,8 @@
 #include "moar.h"
 #include "nodes_moar.h"
 
+#include <stdint.h>
+
 /* Some constants. */
 #define HEADER_SIZE                 92
 #define BYTECODE_VERSION            2
@@ -221,7 +223,7 @@ static void write_int8(char *buffer, size_t offset, unsigned char value) {
 
 /* Writes an double into a buffer. */
 static void write_double(char *buffer, size_t offset, double value) {
-    memcpy(buffer + offset, &value, 8);
+    memcpy_endian(buffer + offset, &value, 8);
 }
 
 /* Ensures the specified buffer has enough space and expands it if so. */
@@ -559,6 +561,9 @@ unsigned short get_callsite_id(VM, WriterState *ws, MASTNode *flags) {
     return (unsigned short)ws->num_callsites++;
 }
 
+#define OVERRIDE_WITH_32 1
+#define OVERRIDE_WITH_16 2
+
 /* Compiles an instruction (which may actaully be any of the
  * nodes valid directly in a Frame's instruction list, which
  * means labels are valid too). */
@@ -567,6 +572,7 @@ void compile_instruction(VM, WriterState *ws, MASTNode *node) {
         MAST_Op   *o = GET_Op(node);
         MVMOpInfo *info;
         int        i;
+        unsigned char override_second_argument = 0;
 
         /* Look up opcode and get argument info. */
         unsigned short op   = o->op;
@@ -587,14 +593,46 @@ void compile_instruction(VM, WriterState *ws, MASTNode *node) {
                 ELEMS(vm, o->operands), info->num_operands);
         }
 
+        /* If we're outputting a const_i64 instruction, we may want to */
+        /* turn it into a const_i64_32 or const_i64_16 instead if it fits */
+        if (op == MVM_OP_const_i64) {
+            MASTNode *operand = ATPOS(vm, o->operands, 1);
+            MAST_IVal *iv = GET_IVal(operand);
+            if (INT16_MIN <= iv->value && iv->value <= INT16_MAX) {
+                override_second_argument = OVERRIDE_WITH_16;
+            } else if (INT32_MIN <= iv->value && iv->value <= INT32_MAX) {
+                override_second_argument = OVERRIDE_WITH_32;
+            }
+        }
+
         /* Write opcode. */
         ensure_space(vm, &ws->bytecode_seg, &ws->bytecode_alloc, ws->bytecode_pos, 2);
-        write_int16(ws->bytecode_seg, ws->bytecode_pos, op);
+        if (override_second_argument == 0)
+            write_int16(ws->bytecode_seg, ws->bytecode_pos, op);
+        else if (override_second_argument == OVERRIDE_WITH_16)
+            write_int16(ws->bytecode_seg, ws->bytecode_pos, MVM_OP_const_i64_16);
+        else if (override_second_argument == OVERRIDE_WITH_32)
+            write_int16(ws->bytecode_seg, ws->bytecode_pos, MVM_OP_const_i64_32);
         ws->bytecode_pos += 2;
 
         /* Write operands. */
-        for (i = 0; i < info->num_operands; i++)
-            compile_operand(vm, ws, info->operands[i], ATPOS(vm, o->operands, i));
+        for (i = 0; i < info->num_operands; i++) {
+            if (i == 1 && override_second_argument) {
+                MASTNode *operand = ATPOS(vm, o->operands, 1);
+                MAST_IVal *iv = GET_IVal(operand);
+                if (override_second_argument == OVERRIDE_WITH_32) {
+                    ensure_space(vm, &ws->bytecode_seg, &ws->bytecode_alloc, ws->bytecode_pos, 4);
+                    write_int32(ws->bytecode_seg, ws->bytecode_pos, (MVMint32)iv->value);
+                    ws->bytecode_pos += 4;
+                } else {
+                    ensure_space(vm, &ws->bytecode_seg, &ws->bytecode_alloc, ws->bytecode_pos, 2);
+                    write_int16(ws->bytecode_seg, ws->bytecode_pos, (MVMint16)iv->value);
+                    ws->bytecode_pos += 2;
+                }
+            } else {
+                compile_operand(vm, ws, info->operands[i], ATPOS(vm, o->operands, i));
+            }
+        }
     }
     else if (ISTYPE(vm, node, ws->types->ExtOp)) {
         MAST_ExtOp *o = GET_ExtOp(node);

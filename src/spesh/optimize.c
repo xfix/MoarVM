@@ -49,12 +49,19 @@ static void optimize_method_lookup(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSp
         MVMString *name = MVM_spesh_get_string(tc, g, ins->operands[2]);
         MVMObject *meth = MVM_6model_find_method_cache_only(tc, obj_facts->type, name);
         if (!MVM_is_null(tc, meth)) {
-            /* Could compile-time resolve the method. Add it in a spesh slot
-             * and tweak instruction to grab it from there. */
+            /* Could compile-time resolve the method. Add it in a spesh slot. */
             MVMint16 ss = MVM_spesh_add_spesh_slot(tc, g, (MVMCollectable *)meth);
+
+            /* Tweak facts for the target, given we know the method. */
+            MVMSpeshFacts *meth_facts = MVM_spesh_get_facts(tc, g, ins->operands[0]);
+            meth_facts->flags |= MVM_SPESH_FACT_KNOWN_VALUE;
+            meth_facts->value.o = meth;
+
+            /* Update the instruction to grab the spesh slot. */
             MVM_spesh_get_facts(tc, g, ins->operands[1])->usages--;
             ins->info = MVM_op_get_op(MVM_OP_sp_getspeshslot);
             ins->operands[1].lit_i16 = ss;
+
             resolved = 1;
         }
     }
@@ -90,6 +97,37 @@ static void optimize_istype(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshIns 
         result_facts->value.i64  = result;
         obj_facts->usages--;
         type_facts->usages--;
+    }
+}
+
+static void optimize_is_reprid(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshIns *ins) {
+    MVMSpeshFacts *obj_facts = MVM_spesh_get_facts(tc, g, ins->operands[1]);
+    MVMuint32 wanted_repr_id;
+    MVMuint64 result_value;
+
+    if (!(obj_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE)) {
+        return;
+    }
+
+    switch (ins->info->opcode) {
+        case MVM_OP_islist: wanted_repr_id = MVM_REPR_ID_MVMArray; break;
+        case MVM_OP_ishash: wanted_repr_id = MVM_REPR_ID_MVMHash; break;
+        case MVM_OP_isint:  wanted_repr_id = MVM_REPR_ID_P6int; break;
+        case MVM_OP_isnum:  wanted_repr_id = MVM_REPR_ID_P6num; break;
+        case MVM_OP_isstr:  wanted_repr_id = MVM_REPR_ID_P6str; break;
+        default:            return;
+    }
+
+    result_value = REPR(obj_facts->type)->ID == wanted_repr_id;
+
+    if (result_value == 0) {
+        MVMSpeshFacts *result_facts = MVM_spesh_get_facts(tc, g, ins->operands[0]);
+        ins->info = MVM_op_get_op(MVM_OP_const_i64_16);
+        ins->operands[1].lit_i16 = 0;
+        result_facts->flags |= MVM_SPESH_FACT_KNOWN_VALUE;
+        result_facts->value.i64 = 0;
+    } else {
+        ins->info = MVM_op_get_op(MVM_OP_isnonnull);
     }
 }
 
@@ -171,6 +209,8 @@ static void optimize_iffy(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshIns *i
         return;
     }
 
+    flag_facts->usages--;
+
     if (truthvalue != negated_op) {
         /* this conditional can be turned into an unconditional jump */
         ins->info = MVM_op_get_op(MVM_OP_goto);
@@ -228,6 +268,43 @@ static void optimize_assertparamcheck(MVMThreadContext *tc, MVMSpeshGraph *g, MV
     }
 }
 
+static void optimize_can_op(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshBB *bb, MVMSpeshIns *ins) {
+    MVMSpeshFacts *obj_facts = MVM_spesh_get_facts(tc, g, ins->operands[1]);
+    MVMString *method_name;
+    MVMint64 can_result;
+
+    if (!(obj_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE) || !obj_facts->type)
+        return;
+
+    if (ins->info->opcode == MVM_OP_can_s) {
+        MVMSpeshFacts *name_facts = MVM_spesh_get_facts(tc, g, ins->operands[2]);
+        if (!(name_facts->flags & MVM_SPESH_FACT_KNOWN_VALUE)) {
+            return;
+        }
+        method_name = name_facts->value.s;
+    } else {
+        method_name = MVM_spesh_get_string(tc, g, ins->operands[2]);
+    }
+
+    can_result = MVM_6model_can_method_cache_only(tc, obj_facts->type, method_name);
+
+    if (can_result == -1) {
+        return;
+    } else {
+        MVMSpeshFacts *result_facts;
+
+        if (ins->info->opcode == MVM_OP_can_s)
+            MVM_spesh_get_facts(tc, g, ins->operands[2])->usages--;
+
+        result_facts                = MVM_spesh_get_facts(tc, g, ins->operands[0]);
+        ins->info                   = MVM_op_get_op(MVM_OP_const_i64);
+        result_facts->flags        |= MVM_SPESH_FACT_KNOWN_VALUE;
+        ins->operands[1].lit_i64    = can_result;
+        result_facts->value.i64     = can_result;
+        obj_facts->usages--;
+    }
+}
+
 /* If we know the type of a significant operand, we might try to specialize by
  * representation. */
 static void optimize_repr_op(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshBB *bb,
@@ -238,8 +315,129 @@ static void optimize_repr_op(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshBB 
             REPR(facts->type)->spesh(tc, STABLE(facts->type), g, bb, ins);
 }
 
+/* Optimizes away a lexical lookup when we know the value won't change from
+ * the logged one. */
+static void optimize_getlex_known(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshBB *bb,
+                                  MVMSpeshIns *ins) {
+    /* Ensure we have a log instruction following this one. */
+    if (ins->next && ins->next->info->opcode == MVM_OP_sp_log) {
+        /* Locate logged object. */
+        MVMuint16       log_slot = ins->next->operands[1].lit_i16 * MVM_SPESH_LOG_RUNS;
+        MVMCollectable *log_obj  = g->log_slots[log_slot];
+        if (log_obj) {
+            MVMSpeshFacts *facts;
+
+            /* Place in a spesh slot. */
+            MVMuint16 ss = MVM_spesh_add_spesh_slot(tc, g, log_obj);
+
+            /* Delete logging instruction. */
+            MVM_spesh_manipulate_delete_ins(tc, bb, ins->next);
+
+            /* Transform lookup instruction into spesh slot read. */
+            MVM_spesh_get_facts(tc, g, ins->operands[1])->usages--;
+            ins->info = MVM_op_get_op(MVM_OP_sp_getspeshslot);
+            ins->operands[1].lit_i16 = ss;
+
+            /* Set up facts. */
+            facts = MVM_spesh_get_facts(tc, g, ins->operands[0]);
+            facts->flags  |= MVM_SPESH_FACT_KNOWN_TYPE | MVM_SPESH_FACT_KNOWN_VALUE;
+            facts->type    = STABLE(log_obj)->WHAT;
+            facts->value.o = (MVMObject *)log_obj;
+            if (IS_CONCRETE(log_obj)) {
+                facts->flags |= MVM_SPESH_FACT_CONCRETE;
+                if (!STABLE(log_obj)->container_spec)
+                    facts->flags |= MVM_SPESH_FACT_DECONTED;
+            }
+            else {
+                facts->flags |= MVM_SPESH_FACT_TYPEOBJ;
+            }
+        }
+    }
+}
+
+/* Drives optimization of a call. */
+static void optimize_call(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshBB *bb,
+                          MVMSpeshIns *ins, MVMint32 callee_idx, MVMSpeshCallInfo *arg_info) {
+    /* Ensure we know what we're going to be invoking. */
+    MVMSpeshFacts *callee_facts = MVM_spesh_get_facts(tc, g, ins->operands[callee_idx]);
+    if (callee_facts->flags & MVM_SPESH_FACT_KNOWN_VALUE) {
+        MVMObject *code   = callee_facts->value.o;
+        MVMObject *target = NULL;
+        if (REPR(code)->ID == MVM_REPR_ID_MVMCode) {
+            /* Already have a code object we know we'll call. */
+            target = code;
+        }
+        else if (STABLE(code)->invocation_spec) {
+            /* What kind of invocation will it be? */
+            MVMInvocationSpec *is = STABLE(code)->invocation_spec;
+            if (!MVM_is_null(tc, is->md_class_handle)) {
+                /* Multi-dispatch. Check if this is a dispatch where we can
+                 * use the cache directly. */
+                MVMRegister dest;
+                REPR(code)->attr_funcs.get_attribute(tc,
+                    STABLE(code), code, OBJECT_BODY(code),
+                    is->md_class_handle, is->md_valid_attr_name,
+                    is->md_valid_hint, &dest, MVM_reg_int64);
+                if (dest.i64) {
+                    /* Yes. Try to obtain the cache. */
+                    REPR(code)->attr_funcs.get_attribute(tc,
+                        STABLE(code), code, OBJECT_BODY(code),
+                        is->md_class_handle, is->md_cache_attr_name,
+                        is->md_cache_hint, &dest, MVM_reg_obj);
+                    if (!MVM_is_null(tc, dest.o)) {
+                        MVMObject *found = MVM_multi_cache_find_spesh(tc, dest.o, arg_info);
+                        if (found) {
+                            /* Found it. Is it a code object already, or do we
+                             * have futher unpacking to do? */
+                            if (REPR(found)->ID == MVM_REPR_ID_MVMCode) {
+                                target = found;
+                            }
+                            else if (STABLE(found)->invocation_spec) {
+                                MVMInvocationSpec *m_is = STABLE(found)->invocation_spec;
+                                if (!MVM_is_null(tc, m_is->class_handle)) {
+                                    REPR(found)->attr_funcs.get_attribute(tc,
+                                        STABLE(found), found, OBJECT_BODY(found),
+                                        is->class_handle, is->attr_name,
+                                        is->hint, &dest, MVM_reg_obj);
+                                    if (REPR(dest.o)->ID == MVM_REPR_ID_MVMCode)
+                                        target = dest.o;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else if (!MVM_is_null(tc, is->class_handle)) {
+                /* Single dispatch; retrieve the code object. */
+                MVMRegister dest;
+                REPR(code)->attr_funcs.get_attribute(tc,
+                    STABLE(code), code, OBJECT_BODY(code),
+                    is->class_handle, is->attr_name,
+                    is->hint, &dest, MVM_reg_obj);
+                if (REPR(dest.o)->ID == MVM_REPR_ID_MVMCode)
+                    target = dest.o;
+            }
+        }
+
+        /* If we resolved to something better than the code object, then add
+         * the resolved item in a spesh slot and insert a lookup. */
+        if (target && target != code && !((MVMCode *)target)->body.is_compiler_stub) {
+            MVMSpeshIns *ss_ins = MVM_spesh_alloc(tc, g, sizeof(MVMSpeshIns));
+            ss_ins->info        = MVM_op_get_op(MVM_OP_sp_getspeshslot);
+            ss_ins->operands    = MVM_spesh_alloc(tc, g, 2 * sizeof(MVMSpeshOperand));
+            ss_ins->operands[0] = ins->operands[callee_idx];
+            ss_ins->operands[1].lit_i16 = MVM_spesh_add_spesh_slot(tc, g,
+                (MVMCollectable *)target);
+            MVM_spesh_manipulate_insert_ins(tc, bb, ins->prev, ss_ins);
+            /* XXX TODO: Do this differently so we can eliminate the original
+             * lookup of the enclosing code object also. */
+        }
+    }
+}
+
 /* Visits the blocks in dominator tree order, recursively. */
 static void optimize_bb(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshBB *bb) {
+    MVMSpeshCallInfo arg_info;
     MVMint32 i;
 
     /* Look for instructions that are interesting to optimize. */
@@ -257,8 +455,49 @@ static void optimize_bb(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshBB *bb) 
         case MVM_OP_unless_o:
             optimize_iffy(tc, g, ins, bb);
             break;
+        case MVM_OP_prepargs:
+            arg_info.cs = g->sf->body.cu->body.callsites[ins->operands[0].callsite_idx];
+            break;
+        case MVM_OP_arg_i:
+        case MVM_OP_arg_n:
+        case MVM_OP_arg_s:
+        case MVM_OP_arg_o: {
+            MVMint16 idx = ins->operands[0].lit_i16;
+            if (idx < MAX_ARGS_FOR_OPT) {
+                arg_info.arg_is_const[idx] = 0;
+                arg_info.arg_facts[idx]    = MVM_spesh_get_facts(tc, g, ins->operands[1]);
+            }
+            break;
+        }
+        case MVM_OP_argconst_i:
+        case MVM_OP_argconst_n:
+        case MVM_OP_argconst_s: {
+            MVMint16 idx = ins->operands[0].lit_i16;
+            if (idx < MAX_ARGS_FOR_OPT)
+                arg_info.arg_is_const[idx] = 1;
+            break;
+        }
+        case MVM_OP_invoke_v:
+            optimize_call(tc, g, bb, ins, 0, &arg_info);
+            break;
+        case MVM_OP_invoke_i:
+        case MVM_OP_invoke_n:
+        case MVM_OP_invoke_s:
+        case MVM_OP_invoke_o:
+            optimize_call(tc, g, bb, ins, 1, &arg_info);
+        case MVM_OP_islist:
+        case MVM_OP_ishash:
+        case MVM_OP_isint:
+        case MVM_OP_isnum:
+        case MVM_OP_isstr:
+            optimize_is_reprid(tc, g, ins);
+            break;
         case MVM_OP_findmeth:
             optimize_method_lookup(tc, g, ins);
+            break;
+        case MVM_OP_can:
+        case MVM_OP_can_s:
+            optimize_can_op(tc, g, bb, ins);
             break;
         case MVM_OP_create:
             optimize_repr_op(tc, g, bb, ins, 1);
@@ -303,6 +542,14 @@ static void optimize_bb(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshBB *bb) 
         case MVM_OP_assertparamcheck:
             optimize_assertparamcheck(tc, g, bb, ins);
             break;
+        case MVM_OP_getlexstatic_o:
+            optimize_getlex_known(tc, g, bb, ins);
+            break;
+        case MVM_OP_sp_log:
+            /* Left-over log instruction that didn't become a guard; just
+             * delete it. */
+            MVM_spesh_manipulate_delete_ins(tc, bb, ins);
+            break;
         }
         ins = ins->next;
     }
@@ -310,45 +557,59 @@ static void optimize_bb(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshBB *bb) 
     /* Visit children. */
     for (i = 0; i < bb->num_children; i++)
         optimize_bb(tc, g, bb->children[i]);
+}
 
-    /* Now walk backwards through the instructions, eliminating any that are
-     * pure and unused. */
-    ins = bb->last_ins;
-    while (ins) {
-        MVMSpeshIns *prev = ins->prev;
-        if (ins->info->opcode == MVM_SSA_PHI) {
-            MVMSpeshFacts *facts = MVM_spesh_get_facts(tc, g, ins->operands[0]);
-            if (facts->usages == 0) {
-                /* Propagate non-usage. */
-                for (i = 1; i < ins->info->num_operands; i++)
-                    MVM_spesh_get_facts(tc, g, ins->operands[i])->usages--;
-
-                /* Remove this phi. */
-                MVM_spesh_manipulate_delete_ins(tc, bb, ins);
-            }
-        }
-        else if (ins->info->pure) {
-            /* Sanity check to make sure it's a write reg as first operand. */
-            if ((ins->info->operands[0] & MVM_operand_rw_mask) == MVM_operand_write_reg) {
-                MVMSpeshFacts *facts = MVM_spesh_get_facts(tc, g, ins->operands[0]);
-                if (facts->usages == 0) {
-                    /* Propagate non-usage. */
-                    for (i = 1; i < ins->info->num_operands; i++)
-                        if ((ins->info->operands[i] & MVM_operand_rw_mask) == MVM_operand_read_reg)
+/* Elimiantes any unused instructions. */
+static void eliminate_dead_ins(MVMThreadContext *tc, MVMSpeshGraph *g) {
+    /* Keep eliminating to a fixed point. */
+    MVMint8 death = 1;
+    while (death) {
+        MVMSpeshBB *bb = g->entry;
+        death = 0;
+        while (bb) {
+            MVMSpeshIns *ins = bb->last_ins;
+            while (ins) {
+                MVMSpeshIns *prev = ins->prev;
+                if (ins->info->opcode == MVM_SSA_PHI) {
+                    MVMSpeshFacts *facts = MVM_spesh_get_facts(tc, g, ins->operands[0]);
+                    if (facts->usages == 0) {
+                        /* Propagate non-usage. */
+                        MVMint32 i;
+                        for (i = 1; i < ins->info->num_operands; i++)
                             MVM_spesh_get_facts(tc, g, ins->operands[i])->usages--;
 
-                    /* Remove this instruction. */
-                    MVM_spesh_manipulate_delete_ins(tc, bb, ins);
+                        /* Remove this phi. */
+                        MVM_spesh_manipulate_delete_ins(tc, bb, ins);
+                        death = 1;
+                    }
                 }
+                else if (ins->info->pure) {
+                    /* Sanity check to make sure it's a write reg as first operand. */
+                    if ((ins->info->operands[0] & MVM_operand_rw_mask) == MVM_operand_write_reg) {
+                        MVMSpeshFacts *facts = MVM_spesh_get_facts(tc, g, ins->operands[0]);
+                        if (facts->usages == 0) {
+                            /* Propagate non-usage. */
+                            MVMint32 i;
+                            for (i = 1; i < ins->info->num_operands; i++)
+                                if ((ins->info->operands[i] & MVM_operand_rw_mask) == MVM_operand_read_reg)
+                                    MVM_spesh_get_facts(tc, g, ins->operands[i])->usages--;
+
+                            /* Remove this instruction. */
+                            MVM_spesh_manipulate_delete_ins(tc, bb, ins);
+                            death = 1;
+                        }
+                    }
+                }
+                ins = prev;
             }
+            bb = bb->linear_next;
         }
-        ins = prev;
     }
 }
 
 /* Eliminates any unreachable basic blocks (that is, dead code). Not having
  * to consider them any further simplifies all that follows. */
-static void eliminate_dead(MVMThreadContext *tc, MVMSpeshGraph *g) {
+static void eliminate_dead_bbs(MVMThreadContext *tc, MVMSpeshGraph *g) {
     /* Iterate to fixed point. */
     MVMint8  *seen     = malloc(g->num_bbs);
     MVMint32  orig_bbs = g->num_bbs;
@@ -394,5 +655,6 @@ static void eliminate_dead(MVMThreadContext *tc, MVMSpeshGraph *g) {
 /* Drives the overall optimization work taking place on a spesh graph. */
 void MVM_spesh_optimize(MVMThreadContext *tc, MVMSpeshGraph *g) {
     optimize_bb(tc, g, g->entry);
-    eliminate_dead(tc, g);
+    eliminate_dead_ins(tc, g);
+    eliminate_dead_bbs(tc, g);
 }

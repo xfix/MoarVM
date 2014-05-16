@@ -45,10 +45,7 @@ static const char * get_typename(MVMuint16 type) {
 #define GET_UI16(pc, idx)   *((MVMuint16 *)(pc + idx))
 #define GET_I32(pc, idx)    *((MVMint32 *)(pc + idx))
 #define GET_UI32(pc, idx)   *((MVMuint32 *)(pc + idx))
-#define GET_I64(pc, idx)    *((MVMint64 *)(pc + idx))
-#define GET_UI64(pc, idx)   *((MVMuint64 *)(pc + idx))
 #define GET_N32(pc, idx)    *((MVMnum32 *)(pc + idx))
-#define GET_N64(pc, idx)    *((MVMnum64 *)(pc + idx))
 
 enum {
     MVM_val_branch_target = 1,
@@ -64,6 +61,13 @@ char * MVM_bytecode_dump(MVMThreadContext *tc, MVMCompUnit *cu) {
     MVMString *name = MVM_string_utf8_decode(tc, tc->instance->VMString, "", 0);
 
     a("\nMoarVM dump of binary compilation unit:\n\n");
+
+    for (k = 0; k < cu->body.num_scs; k++) {
+        char *tmpstr = MVM_string_utf8_encode_C_string(
+            tc, cu->body.strings[cu->body.sc_handle_idxs[k]]);
+        a("  SC_%u : %s\n", k, tmpstr);
+        free(tmpstr);
+    }
 
     for (k = 0; k < cu->body.num_callsites; k++) {
         MVMCallsite *callsite = cu->body.callsites[k];
@@ -230,7 +234,7 @@ char * MVM_bytecode_dump(MVMThreadContext *tc, MVMCompUnit *cu) {
                         break;
                     case MVM_operand_int64:
                         operand_size = 8;
-                        a("%d", GET_I64(cur_op, 0));
+                        a("%d", MVM_BC_get_I64(cur_op, 0));
                         break;
                     case MVM_operand_num32:
                         operand_size = 4;
@@ -238,7 +242,7 @@ char * MVM_bytecode_dump(MVMThreadContext *tc, MVMCompUnit *cu) {
                         break;
                     case MVM_operand_num64:
                         operand_size = 8;
-                        a("%f", GET_N64(cur_op, 0));
+                        a("%f", MVM_BC_get_N64(cur_op, 0));
                         break;
                     case MVM_operand_callsite:
                         operand_size = 2;

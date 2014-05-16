@@ -22,13 +22,36 @@ struct MVMSpeshCandidate {
     MVMCollectable **spesh_slots;
 
     /* Number of spesh slots. */
-    MVMint32 num_spesh_slots;
+    MVMuint32 num_spesh_slots;
 
     /* Deoptimization mappings. */
     MVMint32 *deopts;
 
     /* The number of deoptimization mappings we have. */
-    MVMint32 num_deopts;
+    MVMuint32 num_deopts;
+
+    /* Atomic integer for the number of times we've entered the code so far
+     * for the purpose of logging, in the trace phase. We used this as an
+     * index into the log slots when running logging code. Once it hits the
+     * limit on number of log attempts it increments no further. */
+    AO_t log_enter_idx;
+
+    /* Atomic integer for the number of times we need to exit the logging
+     * version of the code. When this hits zero, we know we were the last
+     * run, that there are no remaining runs, and so we should finalize
+     * the specialization. */
+    AO_t log_exits_remaining;
+
+    /* The spesh graph, if we're still in the process of producing a
+     * specialization for this candidate. NULL afterwards. */
+    MVMSpeshGraph *sg;
+
+    /* Logging slots, used when we're in the log phase of producing
+     * a specialization. */
+    MVMCollectable **log_slots;
+
+    /* Number of logging slots. */
+    MVMuint32 num_log_slots;
 };
 
 /* The number of specializations we'll allow per static frame. */
@@ -53,5 +76,7 @@ struct MVMSpeshGuard {
 #define MVM_SPESH_GUARD_DC_TYPE 4   /* Decont'd value is type object with match type. */
 
 /* Functions for generating a specialization. */
-MVMSpeshCandidate * MVM_spesh_candidate_generate(MVMThreadContext *tc,
+MVMSpeshCandidate * MVM_spesh_candidate_setup(MVMThreadContext *tc,
     MVMStaticFrame *static_frame, MVMCallsite *callsite, MVMRegister *args);
+void MVM_spesh_candidate_specialize(MVMThreadContext *tc, MVMStaticFrame *static_frame,
+        MVMSpeshCandidate *candidate);

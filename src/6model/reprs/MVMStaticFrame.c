@@ -28,8 +28,22 @@ static void copy_to(MVMThreadContext *tc, MVMSTable *st, void *src, MVMObject *d
     MVMStaticFrameBody *src_body  = (MVMStaticFrameBody *)src;
     MVMStaticFrameBody *dest_body = (MVMStaticFrameBody *)dest;
 
-    dest_body->bytecode = src_body->bytecode;
+    dest_body->orig_bytecode = src_body->orig_bytecode;
     dest_body->bytecode_size = src_body->bytecode_size;
+    if (src_body->bytecode == src_body->orig_bytecode) {
+        /* Easy - the source MVMStaticFrameBody doesn't own the memory. */
+        dest_body->bytecode = src_body->bytecode;
+    }
+    else {
+        /* We're going to need to make a copy, in case the source object gets
+           GC'd before we do, and so they free memory we point to. */
+        /* If this gets to be a resource hog, then implement something more
+           sophisticated. The easiest thing would be to bump the allocated size
+           and value stored in bytecode by sizeof(MVMuint64), and use the extra
+           space to store a reference count. */
+        dest_body->bytecode = malloc(src_body->bytecode_size);
+        memcpy(dest_body->bytecode, src_body->bytecode, src_body->bytecode_size);
+    }
 
     MVM_ASSIGN_REF(tc, &(dest_root->header), dest_body->cu, src_body->cu);
     MVM_ASSIGN_REF(tc, &(dest_root->header), dest_body->cuuid, src_body->cuuid);
@@ -141,6 +155,11 @@ static void gc_mark(MVMThreadContext *tc, MVMSTable *st, void *data, MVMGCWorkli
                 MVM_gc_worklist_add(tc, worklist, &body->spesh_candidates[i].guards[j].match);
             for (j = 0; j < body->spesh_candidates[i].num_spesh_slots; j++)
                 MVM_gc_worklist_add(tc, worklist, &body->spesh_candidates[i].spesh_slots[j]);
+            if (body->spesh_candidates[i].log_slots)
+                for (j = 0; j < body->spesh_candidates[i].num_log_slots * MVM_SPESH_LOG_RUNS; j++)
+                    MVM_gc_worklist_add(tc, worklist, &body->spesh_candidates[i].log_slots[j]);
+            if (body->spesh_candidates[i].sg)
+                MVM_spesh_graph_mark(tc, body->spesh_candidates[i].sg, worklist);
         }
     }
 }
@@ -157,6 +176,10 @@ static void gc_free(MVMThreadContext *tc, MVMObject *obj) {
     MVM_checked_free_null(body->lexical_names_list);
     MVM_checked_free_null(body->instr_offsets);
     MVM_HASH_DESTROY(hash_handle, MVMLexicalRegistry, body->lexical_names);
+    if (body->orig_bytecode != body->bytecode) {
+        free(body->bytecode);
+        body->bytecode = body->orig_bytecode;
+    }
 }
 
 /* Gets the storage specification for this representation. */

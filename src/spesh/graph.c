@@ -12,15 +12,18 @@
 #define GET_UI16(pc, idx)   *((MVMuint16 *)(pc + idx))
 #define GET_I32(pc, idx)    *((MVMint32 *)(pc + idx))
 #define GET_UI32(pc, idx)   *((MVMuint32 *)(pc + idx))
-#define GET_I64(pc, idx)    *((MVMint64 *)(pc + idx))
-#define GET_UI64(pc, idx)   *((MVMuint64 *)(pc + idx))
 #define GET_N32(pc, idx)    *((MVMnum32 *)(pc + idx))
-#define GET_N64(pc, idx)    *((MVMnum64 *)(pc + idx))
 
 /* Allocate a piece of memory from the spesh graph's buffer. Deallocated when
  * the spesh graph is. */
 void * MVM_spesh_alloc(MVMThreadContext *tc, MVMSpeshGraph *g, size_t bytes) {
     char *result = NULL;
+
+#if !defined(MVM_CAN_UNALIGNED_INT64) || !defined(MVM_CAN_UNALIGNED_NUM64)
+    /* Round up size to next multiple of 8, to ensure alignment. */
+    bytes = (bytes + 7) & ~7;
+#endif
+
     if (g->mem_block) {
         MVMSpeshMemBlock *block = g->mem_block;
         if (block->alloc + bytes < block->limit) {
@@ -59,6 +62,29 @@ static MVMOpInfo * get_op_info(MVMThreadContext *tc, MVMCompUnit *cu, MVMuint16 
         MVMExtOpRecord *record = &cu->body.extops[index];
         return (MVMOpInfo *)MVM_ext_resolve_extop_record(tc, record);
     }
+}
+
+/* Records a de-optimization annotation and mapping pair. */
+static void add_deopt_annotation(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshIns *ins_node,
+                                 MVMuint8 *pc, MVMint32 type) {
+    /* Add an the annotations. */
+    MVMSpeshAnn *ann      = MVM_spesh_alloc(tc, g, sizeof(MVMSpeshAnn));
+    ann->type             = type;
+    ann->data.deopt_idx   = g->num_deopt_addrs;
+    ann->next             = ins_node->annotations;
+    ins_node->annotations = ann;
+
+    /* Record PC in the deopt entries table. */
+    if (g->num_deopt_addrs == g->alloc_deopt_addrs) {
+        g->alloc_deopt_addrs += 4;
+        if (g->deopt_addrs)
+            g->deopt_addrs = realloc(g->deopt_addrs,
+                g->alloc_deopt_addrs * sizeof(MVMint32) * 2);
+        else
+            g->deopt_addrs = malloc(g->alloc_deopt_addrs * sizeof(MVMint32) * 2);
+    }
+    g->deopt_addrs[2 * g->num_deopt_addrs] = pc - g->sf->body.bytecode;
+    g->num_deopt_addrs++;
 }
 
 /* Builds the control flow graph, populating the passed spesh graph structure
@@ -164,7 +190,7 @@ static void build_cfg(MVMThreadContext *tc, MVMSpeshGraph *g, MVMStaticFrame *sf
                     arg_size += 4;
                     break;
                 case MVM_operand_int64:
-                    ins_node->operands[i].lit_i64 = GET_I64(args, arg_size);
+                    ins_node->operands[i].lit_i64 = MVM_BC_get_I64(args, arg_size);
                     arg_size += 8;
                     break;
                 case MVM_operand_num32:
@@ -172,7 +198,7 @@ static void build_cfg(MVMThreadContext *tc, MVMSpeshGraph *g, MVMStaticFrame *sf
                     arg_size += 4;
                     break;
                 case MVM_operand_num64:
-                    ins_node->operands[i].lit_n64 = GET_N64(args, arg_size);
+                    ins_node->operands[i].lit_n64 = MVM_BC_get_N64(args, arg_size);
                     arg_size += 8;
                     break;
                 case MVM_operand_callsite:
@@ -221,7 +247,7 @@ static void build_cfg(MVMThreadContext *tc, MVMSpeshGraph *g, MVMStaticFrame *sf
          * we jump to the instruction after the n jump points if none match,
          * so that is marked too. */
         if (opcode == MVM_OP_jumplist) {
-            MVMint64 n = GET_I64(args, 0);
+            MVMint64 n = MVM_BC_get_I64(args, 0);
             for (i = 0; i <= n; i++)
                 byte_to_ins_flags[(pc - sf->body.bytecode) + 12 + i * 6] |= MVM_CFG_BB_START;
             byte_to_ins_flags[pc - sf->body.bytecode] |= MVM_CFG_BB_END;
@@ -235,26 +261,10 @@ static void build_cfg(MVMThreadContext *tc, MVMSpeshGraph *g, MVMStaticFrame *sf
         pc += 2 + arg_size;
 
         /* If this is a deopt point opcode... */
-        if (info->deopt_point) {
-            /* Add an the annotations. */
-            MVMSpeshAnn *ann      = MVM_spesh_alloc(tc, g, sizeof(MVMSpeshAnn));
-            ann->type             = MVM_SPESH_ANN_DEOPT_INS;
-            ann->data.deopt_idx   = g->num_deopt_addrs;
-            ann->next             = ins_node->annotations;
-            ins_node->annotations = ann;
-
-            /* Record PC in the deopt entries table. */
-            if (g->num_deopt_addrs == g->alloc_deopt_addrs) {
-                g->alloc_deopt_addrs += 4;
-                if (g->deopt_addrs)
-                    g->deopt_addrs = realloc(g->deopt_addrs,
-                        g->alloc_deopt_addrs * sizeof(MVMint32) * 2);
-                else
-                    g->deopt_addrs = malloc(g->alloc_deopt_addrs * sizeof(MVMint32) * 2);
-            }
-            g->deopt_addrs[2 * g->num_deopt_addrs] = pc - sf->body.bytecode;
-            g->num_deopt_addrs++;
-        }
+        if (info->deopt_point & MVM_DEOPT_MARK_ONE)
+            add_deopt_annotation(tc, g, ins_node, pc, MVM_SPESH_ANN_DEOPT_ONE_INS);
+        if (info->deopt_point & MVM_DEOPT_MARK_ALL)
+            add_deopt_annotation(tc, g, ins_node, pc, MVM_SPESH_ANN_DEOPT_ALL_INS);
 
         /* Go to next instruction. */
         ins_idx++;
@@ -924,10 +934,12 @@ static void ssa(MVMThreadContext *tc, MVMSpeshGraph *g) {
 
     /* Allocate space for spesh facts for each local; clean up stacks while
      * we're at it. */
-    num_locals = g->sf->body.num_locals;
-    g->facts = MVM_spesh_alloc(tc, g, num_locals * sizeof(MVMSpeshFacts *));
+    num_locals     = g->sf->body.num_locals;
+    g->facts       = MVM_spesh_alloc(tc, g, num_locals * sizeof(MVMSpeshFacts *));
+    g->fact_counts = MVM_spesh_alloc(tc, g, num_locals * sizeof(MVMuint16));
     for (i = 0; i < num_locals; i++) {
-        g->facts[i] = MVM_spesh_alloc(tc, g, var_info[i].count * sizeof(MVMSpeshFacts));
+        g->fact_counts[i] = var_info[i].count;
+        g->facts[i]       = MVM_spesh_alloc(tc, g, var_info[i].count * sizeof(MVMSpeshFacts));
         if (var_info[i].stack_alloc)
             free(var_info[i].stack);
     }
@@ -954,6 +966,27 @@ MVMSpeshGraph * MVM_spesh_graph_create(MVMThreadContext *tc, MVMStaticFrame *sf)
 
     /* Hand back the completed graph. */
     return g;
+}
+
+/* Marks GCables held in a spesh graph. */
+void MVM_spesh_graph_mark(MVMThreadContext *tc, MVMSpeshGraph *g, MVMGCWorklist *worklist) {
+    MVMuint16 i, j, num_locals, num_facts;
+
+    /* Mark static frame. */
+    MVM_gc_worklist_add(tc, worklist, &g->sf);
+
+    /* Mark facts. */
+    num_locals = g->sf->body.num_locals;
+    for (i = 0; i < num_locals; i++) {
+        num_facts = g->fact_counts[i];
+        for (j = 0; j < num_facts; j++) {
+            MVMint32 flags = g->facts[i][j].flags;
+            if (flags & MVM_SPESH_FACT_KNOWN_TYPE)
+                MVM_gc_worklist_add(tc, worklist, &(g->facts[i][j].type));
+            if (flags & MVM_SPESH_FACT_KNOWN_DECONT_TYPE)
+                MVM_gc_worklist_add(tc, worklist, &(g->facts[i][j].type));
+        }
+    }
 }
 
 /* Destroys a spesh graph, deallocating all its associated memory. */

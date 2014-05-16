@@ -300,6 +300,7 @@ static void deserialize_sc_deps(MVMThreadContext *tc, MVMCompUnit *cu, ReaderSta
     /* Allocate SC lists in compilation unit. */
     cu_body->scs = malloc(rs->expected_scs * sizeof(MVMSerializationContext *));
     cu_body->scs_to_resolve = malloc(rs->expected_scs * sizeof(MVMSerializationContextBody *));
+    cu_body->sc_handle_idxs = malloc(rs->expected_scs * sizeof(MVMint32));
     cu_body->num_scs = rs->expected_scs;
 
     /* Resolve all the things. */
@@ -318,6 +319,7 @@ static void deserialize_sc_deps(MVMThreadContext *tc, MVMCompUnit *cu, ReaderSta
             cleanup_all(tc, rs);
             MVM_exception_throw_adhoc(tc, "String heap index beyond end of string heap");
         }
+        cu_body->sc_handle_idxs[i] = sh_idx;
         handle = cu_body->strings[sh_idx];
 
         /* See if we can resolve it. */
@@ -333,6 +335,7 @@ static void deserialize_sc_deps(MVMThreadContext *tc, MVMCompUnit *cu, ReaderSta
                 scb = calloc(1, sizeof(MVMSerializationContextBody));
                 scb->handle = handle;
                 MVM_HASH_BIND(tc, tc->instance->sc_weakhash, handle, scb);
+                MVM_sc_add_all_scs_entry(tc, scb);
             }
             cu_body->scs_to_resolve[i] = scb;
             cu_body->scs[i] = NULL;
@@ -518,6 +521,7 @@ static MVMStaticFrame ** deserialize_frames(MVMThreadContext *tc, MVMCompUnit *c
         }
         static_frame_body->bytecode = rs->bytecode_seg + bytecode_pos;
         static_frame_body->bytecode_size = bytecode_size;
+        static_frame_body->orig_bytecode = static_frame_body->bytecode;
 
         /* Get number of locals and lexicals. */
         static_frame_body->num_locals = read_int32(pos, 8);

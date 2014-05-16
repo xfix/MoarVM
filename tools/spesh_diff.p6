@@ -44,7 +44,7 @@ class Spesh is rw {
     has Str $.diff;
 }
 
-enum Target <Before After>;
+enum Target <Before Logged Facts Specialized>;
 
 sub supersmartmatch($thing) {
     given $thing {
@@ -66,12 +66,13 @@ sub supersmartmatch($thing) {
 
 multi sub MAIN($filename?, :$matcher?) {
     my %speshes;
-    my Spesh  $current;
     my Target $target;
 
     my $linecount;
+    my Int $lines_total;
 
     if $filename {
+        $lines_total = qqx/ wc -l '$filename' /.words[0].Int;
         $*ARGFILES = open($filename, :r);
     } else {
         $*ARGFILES = $*IN;
@@ -102,58 +103,99 @@ multi sub MAIN($filename?, :$matcher?) {
             $did_print = True;
         }
         if $did_print and ++$printed %% 80 {
+            if $lines_total {
+                my $part = $linecount / $lines_total;
+                $*ERR.print(($part * 100).fmt(" % 3.2f%%"));
+                my $est_time_left = (1 - $part) * (now - INIT now) / $part;
+                $*ERR.print(($est_time_left / 60).fmt(" %d") ~ ($est_time_left % 60).fmt(":%02ds"));
+            }
             $*ERR.print("\n");
         }
     }
 
+    try mkdir "spesh_diffs_before";
+    try mkdir "spesh_diffs_after";
+
+    my Spesh $current;
+
     for lines() {
         my $line = $_;
-        when /^ 'Specialized ' \' $<name>=[<-[\']>*] \' ' (cuid: ' $<cuid>=[<-[\)]>+] ')'/ {
-            if $current {
-                if %speshes{$current.cuid}:exists {
-                    $current.cuid ~= "_";
+        $linecount++;
+        when /^'  ' / {
+            given $target {
+                when Before {
+                    $current.beforelines.push: $line;
+                    notegraph(".");
                 }
-                %speshes{$current.cuid} = $current if $current;
-
-                $current.before = $current.beforelines.join("\n");
-                $current.after  = $current.afterlines.join("\n");
-                $current.beforelines = Any;
-                $current.afterlines = Any;
+                when Specialized {
+                    $current.afterlines.push: $line;
+                    notegraph(".");
+                }
             }
-            $current .= new(name => $<name>.Str, cuid => $<cuid>.Str, diff => "");
-            notegraph("c");
+        }
+        when /^
+              [$<kind>=I 'nserting logging for specialization of ' | $<kind>=F 'inished specialization of '] \'
+                $<name>=[<-[\']>*] \'
+                ' (cuid: ' $<cuid>=[<-[\)]>+] ')'
+            / {
+            my $cuid = $<cuid>;
+            if $<kind> eq 'I' {
+                # want to build a new one
+                while %speshes{$cuid}:exists {
+                    $cuid ~= "_";
+                }
+
+                $current .= new(name => $<name>.Str, cuid => $<cuid>.Str, diff => "");
+                %speshes{$current.cuid} = $current;
+            } elsif $<kind> eq 'F' {
+                # want to find the last one added that exists.
+                while %speshes{$cuid}:exists {
+                    $cuid ~= '_';
+                }
+                # so we chop off a _ again
+                $cuid = $cuid.substr(0, *-1);
+
+                $current = %speshes{$cuid};
+
+                warn "couldn't find a before-image for cuid $cuid" unless $current;
+
+                $target = Specialized;
+            }
+            notegraph($<kind>);
         }
         when /^ 'Before:'/ {
             $target = Before;
-            notegraph("b");
         }
         when /^ 'After:'/ {
-            $target = After;
-            notegraph("a");
+            $current.before = $current.beforelines.join("\n");
+            $current.beforelines = @();
+            $target = Logged;
         }
-        when /^'  ' (.*)/ {
-            if $target ~~ Before {
-                $current.beforelines.push: $line;
-            } elsif $target ~~ After {
-                $current.afterlines.push: $line;
+        when /^ 'Facts:'/ {
+            if $target ~~ Specialized {
+                given $current {
+                    .after = .afterlines.join("\n");
+                    .afterlines = @();
+                    spurt "spesh_diffs_before/{.cuid}.txt", "{.name} (before)\n{.before}";
+                    spurt "spesh_diffs_after/{.cuid}.txt", "{.name} (after)\n{.after}";
+                    unless $matcher {
+                        .before = "";
+                        .after = "";
+                    }
+                }
             }
-            notegraph(".");
+            $target = Facts;
         }
-        $linecount++;
     }
 
     say "we've parsed $linecount lines";
     say "we have the following cuids:";
 
-    try mkdir "spesh_diffs_before";
-    try mkdir "spesh_diffs_after";
-
     my @results;
     my @interesting;
 
     for %speshes.values {
-        spurt "spesh_diffs_before/{.cuid}.txt", "{.name} (before)\n{.before}";
-        spurt "spesh_diffs_after/{.cuid}.txt", "{.name} (after)\n{.after}";
+        next if not .after.defined;
 
         @results.push: $_.diff = qq:x"git diff --patience --color=always --no-index spesh_diffs_before/{.cuid}.txt spesh_diffs_after/{.cuid}.txt";
         my $matched = $matcher && $_ ~~ $ssm;
