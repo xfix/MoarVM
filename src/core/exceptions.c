@@ -78,7 +78,7 @@ static MVMFrameHandler * search_frame_handlers(MVMThreadContext *tc, MVMFrame *f
         MVMFrameHandler              eh = f->effective_handlers[i];
         MVMuint32         category_mask = eh.category_mask;
         MVMuint64       block_has_label = category_mask & MVM_EX_CAT_LABELED;
-        MVMuint64           block_label = block_has_label ? (MVMuint64)(f->work[eh.block_label].o) : 0;
+        MVMuint64           block_label = block_has_label ? (MVMuint64)(f->work[eh.label_reg].o) : 0;
         MVMuint64          thrown_label = payload ? (MVMuint64)payload : 0;
         MVMuint64 identical_label_found = thrown_label == block_label;
 

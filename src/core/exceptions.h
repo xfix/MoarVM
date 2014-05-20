@@ -42,8 +42,9 @@ struct MVMFrameHandler {
     /* Offset into the frame's bytecode of the handler, for goto handlers. */
     MVMuint32 goto_offset;
 
-    /* A label, so we can check for its identity when handling e.g. `next LABEL`. */
-    MVMuint16 block_label;
+    /* Register containing a label in case we have a labeled loop. We need to
+     * be able to check for its identity when handling e.g. `next LABEL`. */
+    MVMuint16 label_reg;
 };
 
 /* An active (currently executing) exception handler. */

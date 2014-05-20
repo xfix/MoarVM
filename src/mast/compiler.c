@@ -54,8 +54,8 @@ typedef struct {
     /* Label, which will need resolving. */
     MASTNode *label;
 
-    /* The label of the block the handler is attached to. */
-    unsigned short block_label;
+    /* Local holding a label in case we have a labeled loop. */
+    unsigned short label_reg;
 } FrameHandler;
 
 /* Handler actions. */
@@ -868,8 +868,8 @@ void compile_instruction(VM, WriterState *ws, MASTNode *node) {
         ws->cur_frame->handlers[i].category_mask = (unsigned int)hs->category_mask;
         ws->cur_frame->handlers[i].action = (unsigned short)hs->action;
         if (ws->cur_frame->handlers[i].category_mask & MVM_EX_CAT_LABELED) {
-            if (ISTYPE(vm, hs->block_label, ws->types->Local)) {
-                MAST_Local *l = GET_Local(hs->block_label);
+            if (ISTYPE(vm, hs->label_local, ws->types->Local)) {
+                MAST_Local *l = GET_Local(hs->label_local);
 
                 /* Ensure it's within the set of known locals and an object. */
                 if (l->index >= ws->cur_frame->num_locals) {
@@ -882,7 +882,7 @@ void compile_instruction(VM, WriterState *ws, MASTNode *node) {
                 }
 
                 /* Stash local index. */
-                ws->cur_frame->handlers[i].block_label = (unsigned short)l->index;
+                ws->cur_frame->handlers[i].label_reg = (unsigned short)l->index;
             }
             else {
                 cleanup_all(vm, ws);
@@ -1105,7 +1105,7 @@ void compile_frame(VM, WriterState *ws, MASTNode *node, unsigned short idx) {
         }
         ws->frame_pos += 4;
         if (fs->handlers[i].category_mask & MVM_EX_CAT_LABELED) {
-            write_int16(ws->frame_seg, ws->frame_pos, fs->handlers[i].block_label);
+            write_int16(ws->frame_seg, ws->frame_pos, fs->handlers[i].label_reg);
             ws->frame_pos += 2;
         }
     }
