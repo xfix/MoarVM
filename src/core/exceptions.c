@@ -31,11 +31,11 @@ static const char * cat_name(MVMThreadContext *tc, MVMint32 cat) {
             return "succeed";
         case MVM_EX_CAT_PROCEED:
             return "proceed";
-        case MVM_EX_CAT_NEXT|MVM_EX_CAT_LABELED:
+        case MVM_EX_CAT_NEXT | MVM_EX_CAT_LABELED:
             return "next_label";
-        case MVM_EX_CAT_REDO|MVM_EX_CAT_LABELED:
+        case MVM_EX_CAT_REDO | MVM_EX_CAT_LABELED:
             return "redo_label";
-        case MVM_EX_CAT_LAST|MVM_EX_CAT_LABELED:
+        case MVM_EX_CAT_LAST | MVM_EX_CAT_LABELED:
             return "last_label";
         default:
             return "unknown";
