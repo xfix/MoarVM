@@ -1290,11 +1290,24 @@ static MVMuint64 elems(MVMThreadContext *tc, MVMSTable *st, MVMObject *root, voi
 }
 
 /* Bytecode specialization for this REPR. */
+static MVMString * spesh_attr_name(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshOperand o, MVMint32 indirect) {
+    if (indirect) {
+        MVMSpeshFacts *name_facts = MVM_spesh_get_facts(tc, g, o);
+        if (name_facts->flags & MVM_SPESH_FACT_KNOWN_VALUE)
+            return name_facts->value.s;
+        else
+            return NULL;
+    }
+    else {
+        return MVM_spesh_get_string(tc, g, o);
+    }
+}
 static void spesh(MVMThreadContext *tc, MVMSTable *st, MVMSpeshGraph *g, MVMSpeshBB *bb, MVMSpeshIns *ins) {
     MVMP6opaqueREPRData * repr_data = (MVMP6opaqueREPRData *)st->REPR_data;
+    MVMuint16             opcode    = ins->info->opcode;
     if (!repr_data)
         return;
-    switch (ins->info->opcode) {
+    switch (opcode) {
     case MVM_OP_create: {
         /* Create can be optimized if there are no initialization slots. */
         if (repr_data->initialize_slots[0] < 0) {
@@ -1309,11 +1322,96 @@ static void spesh(MVMThreadContext *tc, MVMSTable *st, MVMSpeshGraph *g, MVMSpes
         }
         break;
     }
-    case MVM_OP_bindattr_o: {
-        MVMSpeshFacts *ch_facts = MVM_spesh_get_facts(tc, g, ins->operands[1]);
-        if (ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
+    case MVM_OP_getattr_o:
+    case MVM_OP_getattrs_o: {
+        MVMSpeshFacts *ch_facts = MVM_spesh_get_facts(tc, g, ins->operands[2]);
+        MVMString     *name     = spesh_attr_name(tc, g, ins->operands[3], opcode == MVM_OP_getattrs_o);
+        if (name && ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
+            MVMint64 slot = try_get_slot(tc, repr_data, ch_facts->type, name);
+            if (slot >= 0 && !repr_data->mi && !repr_data->flattened_stables[slot]) {
+                if (repr_data->auto_viv_values && repr_data->auto_viv_values[slot]) {
+                    MVMObject *av_value = repr_data->auto_viv_values[slot];
+                    if (IS_CONCRETE(av_value)) {
+                        ins->info = MVM_op_get_op(MVM_OP_sp_p6ogetvc_o);
+                    }
+                    else {
+                        ins->info = MVM_op_get_op(MVM_OP_sp_p6ogetvt_o);
+                    }
+                    /*MVM_spesh_get_facts(tc, g, ins->operands[2])->usages--;*/
+                    ins->operands[2].lit_i16 = repr_data->attribute_offsets[slot];
+                    ins->operands[3].lit_i16 = MVM_spesh_add_spesh_slot(tc, g,
+                        (MVMCollectable *)av_value);
+                }
+                else {
+                    /*MVM_spesh_get_facts(tc, g, ins->operands[2])->usages--;*/
+                    ins->info = MVM_op_get_op(MVM_OP_sp_p6oget_o);
+                    ins->operands[2].lit_i16 = repr_data->attribute_offsets[slot];
+                }
+            }
+        }
+        break;
+    }
+    case MVM_OP_getattr_i:
+    case MVM_OP_getattrs_i: {
+        MVMSpeshFacts *ch_facts = MVM_spesh_get_facts(tc, g, ins->operands[2]);
+        MVMString     *name     = spesh_attr_name(tc, g, ins->operands[3], opcode == MVM_OP_getattrs_i);
+        if (name && ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
+            MVMint64 slot = try_get_slot(tc, repr_data, ch_facts->type, name);
+            if (slot >= 0 && repr_data->flattened_stables[slot]) {
+                MVMSTable     *flat_st = repr_data->flattened_stables[slot];
+                MVMStorageSpec flat_ss = flat_st->REPR->get_storage_spec(tc, flat_st);
+                if (flat_st->REPR->ID == MVM_REPR_ID_P6int && flat_ss.bits == 64) {
+                    /*MVM_spesh_get_facts(tc, g, ins->operands[2])->usages--;*/
+                    ins->info = MVM_op_get_op(MVM_OP_sp_p6oget_i);
+                    ins->operands[2].lit_i16 = repr_data->attribute_offsets[slot];
+                }
+            }
+        }
+        break;
+    }
+    case MVM_OP_getattr_n:
+    case MVM_OP_getattrs_n: {
+        MVMSpeshFacts *ch_facts = MVM_spesh_get_facts(tc, g, ins->operands[2]);
+        MVMString     *name     = spesh_attr_name(tc, g, ins->operands[3], opcode == MVM_OP_getattrs_n);
+        if (name && ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
             MVMint64 slot = try_get_slot(tc, repr_data, ch_facts->type,
-                MVM_spesh_get_string(tc, g, ins->operands[2]));
+                MVM_spesh_get_string(tc, g, ins->operands[3]));
+            if (slot >= 0 && repr_data->flattened_stables[slot]) {
+                MVMSTable     *flat_st = repr_data->flattened_stables[slot];
+                MVMStorageSpec flat_ss = flat_st->REPR->get_storage_spec(tc, flat_st);
+                if (flat_st->REPR->ID == MVM_REPR_ID_P6num && flat_ss.bits == 64) {
+                    /*MVM_spesh_get_facts(tc, g, ins->operands[2])->usages--;*/
+                    ins->info = MVM_op_get_op(MVM_OP_sp_p6oget_n);
+                    ins->operands[2].lit_i16 = repr_data->attribute_offsets[slot];
+                }
+            }
+        }
+        break;
+    }
+    case MVM_OP_getattr_s:
+    case MVM_OP_getattrs_s: {
+        MVMSpeshFacts *ch_facts = MVM_spesh_get_facts(tc, g, ins->operands[2]);
+        MVMString     *name     = spesh_attr_name(tc, g, ins->operands[3], opcode == MVM_OP_getattrs_s);
+        if (name && ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
+            MVMint64 slot = try_get_slot(tc, repr_data, ch_facts->type, name);
+            if (slot >= 0 && repr_data->flattened_stables[slot]) {
+                MVMSTable     *flat_st = repr_data->flattened_stables[slot];
+                MVMStorageSpec flat_ss = flat_st->REPR->get_storage_spec(tc, flat_st);
+                if (flat_st->REPR->ID == MVM_REPR_ID_P6str) {
+                    /*MVM_spesh_get_facts(tc, g, ins->operands[2])->usages--;*/
+                    ins->info = MVM_op_get_op(MVM_OP_sp_p6oget_s);
+                    ins->operands[2].lit_i16 = repr_data->attribute_offsets[slot];
+                }
+            }
+        }
+        break;
+    }
+    case MVM_OP_bindattr_o:
+    case MVM_OP_bindattrs_o: {
+        MVMSpeshFacts *ch_facts = MVM_spesh_get_facts(tc, g, ins->operands[1]);
+        MVMString     *name     = spesh_attr_name(tc, g, ins->operands[2], opcode == MVM_OP_bindattrs_o);
+        if (name && ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
+            MVMint64 slot = try_get_slot(tc, repr_data, ch_facts->type, name);
             if (slot >= 0 && !repr_data->flattened_stables[slot]) {
                 MVM_spesh_get_facts(tc, g, ins->operands[1])->usages--;
                 ins->info = MVM_op_get_op(MVM_OP_sp_p6obind_o);
@@ -1323,11 +1421,12 @@ static void spesh(MVMThreadContext *tc, MVMSTable *st, MVMSpeshGraph *g, MVMSpes
         }
         break;
     }
-    case MVM_OP_bindattr_i: {
+    case MVM_OP_bindattr_i:
+    case MVM_OP_bindattrs_i: {
         MVMSpeshFacts *ch_facts = MVM_spesh_get_facts(tc, g, ins->operands[1]);
-        if (ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
-            MVMint64 slot = try_get_slot(tc, repr_data, ch_facts->type,
-                MVM_spesh_get_string(tc, g, ins->operands[2]));
+        MVMString     *name     = spesh_attr_name(tc, g, ins->operands[2], opcode == MVM_OP_bindattrs_i);
+        if (name && ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
+            MVMint64 slot = try_get_slot(tc, repr_data, ch_facts->type, name);
             if (slot >= 0 && repr_data->flattened_stables[slot]) {
                 MVMSTable     *flat_st = repr_data->flattened_stables[slot];
                 MVMStorageSpec flat_ss = flat_st->REPR->get_storage_spec(tc, flat_st);
@@ -1341,11 +1440,12 @@ static void spesh(MVMThreadContext *tc, MVMSTable *st, MVMSpeshGraph *g, MVMSpes
         }
         break;
     }
-    case MVM_OP_bindattr_n: {
+    case MVM_OP_bindattr_n:
+    case MVM_OP_bindattrs_n: {
         MVMSpeshFacts *ch_facts = MVM_spesh_get_facts(tc, g, ins->operands[1]);
-        if (ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
-            MVMint64 slot = try_get_slot(tc, repr_data, ch_facts->type,
-                MVM_spesh_get_string(tc, g, ins->operands[2]));
+        MVMString     *name     = spesh_attr_name(tc, g, ins->operands[2], opcode == MVM_OP_bindattrs_n);
+        if (name && ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
+            MVMint64 slot = try_get_slot(tc, repr_data, ch_facts->type, name);
             if (slot >= 0 && repr_data->flattened_stables[slot]) {
                 MVMSTable     *flat_st = repr_data->flattened_stables[slot];
                 MVMStorageSpec flat_ss = flat_st->REPR->get_storage_spec(tc, flat_st);
@@ -1361,9 +1461,9 @@ static void spesh(MVMThreadContext *tc, MVMSTable *st, MVMSpeshGraph *g, MVMSpes
     }
     case MVM_OP_bindattr_s: {
         MVMSpeshFacts *ch_facts = MVM_spesh_get_facts(tc, g, ins->operands[1]);
-        if (ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
-            MVMint64 slot = try_get_slot(tc, repr_data, ch_facts->type,
-                MVM_spesh_get_string(tc, g, ins->operands[2]));
+        MVMString     *name     = spesh_attr_name(tc, g, ins->operands[2], opcode == MVM_OP_bindattrs_s);
+        if (name && ch_facts->flags & MVM_SPESH_FACT_KNOWN_TYPE && ch_facts->type) {
+            MVMint64 slot = try_get_slot(tc, repr_data, ch_facts->type, name);
             if (slot >= 0 && repr_data->flattened_stables[slot]) {
                 MVMSTable     *flat_st = repr_data->flattened_stables[slot];
                 MVMStorageSpec flat_ss = flat_st->REPR->get_storage_spec(tc, flat_st);
