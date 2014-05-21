@@ -596,7 +596,7 @@ class MAST::HandlerScope is MAST::Node {
     has int $!action;
     has $!goto_label;
     has $!block_local;
-    has $!block_label;
+    has $!label_local;
 
     method new(:@instructions!, :$category_mask!, :$action!, :$goto!, :$block, :$label) {
         my $obj := nqp::create(self);
@@ -623,7 +623,7 @@ class MAST::HandlerScope is MAST::Node {
         }
         if $category_mask +& $HandlerCategory::labeled {
             if nqp::istype($label, MAST::Local) {
-                nqp::bindattr($obj, MAST::HandlerScope, '$!block_label', $label);
+                nqp::bindattr($obj, MAST::HandlerScope, '$!label_local', $label);
             }
             else {
                 nqp::die("Handler category 'labeled' needs a MAST::Local");
